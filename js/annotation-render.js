@@ -15,9 +15,9 @@ export function areaLabel(item) {
 
 /**
  * @param {{ ctx: CanvasRenderingContext2D, view: {s:number,tx:number,ty:number}, dpr: number, width: number, height: number, forExport?: boolean }} frame
- * @param {{ items: any[], draft?: any, snap?: {x:number,y:number}|null }} content
+ * @param {{ items: any[], draft?: any, snap?: {x:number,y:number}|null, selectedId?: string|null, rects?: Map<string, {x:number,y:number,w:number,h:number}>|null }} content
  */
-export function drawAnnotations(frame, { items, draft = null, snap = null }) {
+export function drawAnnotations(frame, { items, draft = null, snap = null, selectedId = null, rects = null }) {
   const { ctx, view, dpr, width, height, forExport = false } = frame;
   // 書き出し(PDF)では画面より細かい座標で描くので、線や文字を大きくする
   const ui = forExport ? Math.max(1, Math.min(width, height) / 1000) : 1;
@@ -72,6 +72,12 @@ export function drawAnnotations(frame, { items, draft = null, snap = null }) {
       const lines = item.text.split("\n");
       const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
       const lh = px(19);
+      const box = { x: at.x - px(3), y: at.y - px(15), w: w + px(8), h: lh * lines.length + px(2) };
+      if (rects && !forExport) rects.set(item.id, box); // 選ぶときの当たり判定に使う(画面px)
+      if (item.id === selectedId && !forExport) {
+        ctx.fillStyle = "rgba(255,214,0,0.55)";
+        ctx.fillRect(box.x - 5, box.y - 5, box.w + 10, box.h + 10);
+      }
       ctx.fillStyle = "rgba(255,255,255,0.88)";
       ctx.fillRect(at.x - px(3), at.y - px(15), w + px(8), lh * lines.length + px(2));
       ctx.strokeStyle = color;
@@ -84,6 +90,16 @@ export function drawAnnotations(frame, { items, draft = null, snap = null }) {
     }
     const pts = item.points.map(toScreen);
     const all = cursor ? [...pts, toScreen(cursor)] : pts;
+    if (item.id === selectedId && !forExport) {
+      // 選んでいる注釈の下に、黄色い太い線を敷く
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = "rgba(255,214,0,0.6)";
+      ctx.lineWidth = 12;
+      path(all, item.kind === "area" && all.length >= 3);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (item.kind === "pen") {
       ctx.lineWidth = px(2.5);
       path(all);

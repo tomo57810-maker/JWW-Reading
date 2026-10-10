@@ -40,6 +40,11 @@ export class AnnotationStore {
     return full;
   }
 
+  /** 注釈の中身を直接変えたあとに呼ぶ(保存・再描画のため)。 */
+  touch() {
+    this.onChange(this.items);
+  }
+
   remove(id) {
     const before = this.items.length;
     this.items = this.items.filter((i) => i.id !== id);

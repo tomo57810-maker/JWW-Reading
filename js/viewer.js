@@ -278,7 +278,7 @@ export class Viewer {
         this.tool.down(toolPoint(p));
         this.#schedule();
       } else if (this.pointers.size >= 2 && this.toolPointerId !== null) {
-        this.tool?.cancel();
+        this.tool?.abort?.();
         this.toolPointerId = null;
       }
     });
@@ -313,7 +313,7 @@ export class Viewer {
       const p = local(ev);
       if (ev.pointerId === this.toolPointerId) {
         this.toolPointerId = null;
-        if (cancelled) this.tool?.cancel();
+        if (cancelled) this.tool?.abort?.();
         else this.tool?.up(toolPoint(p));
         this.#schedule();
       }

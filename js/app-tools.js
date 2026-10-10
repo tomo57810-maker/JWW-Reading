@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 
 const HINTS = {
   move: "指で動かす・2本指で拡大",
+  select: "注釈をタップで選び、ドラッグで移動",
   dim: "2点をタップ(端点に吸着)",
   area: "角を順にタップ→「完了」",
   route: "経路を順にタップ→「完了」",
@@ -20,7 +21,7 @@ const HINTS = {
 export function setupTools({ viewer, getModel, getFileName }) {
   const el = {
     bar: $("tools"), scale: $("scale"), hint: $("tool-hint"),
-    done: $("t-done"), cancel: $("t-cancel"), undo: $("t-undo"), exportBtn: $("t-export"),
+    done: $("t-done"), cancel: $("t-cancel"), copy: $("t-copy"), edit: $("t-edit"), del: $("t-del"), undo: $("t-undo"), exportBtn: $("t-export"),
     txt: $("txt"), txtInput: $("txt-input"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"),
   };
@@ -35,9 +36,11 @@ export function setupTools({ viewer, getModel, getFileName }) {
     saveTimer = setTimeout(() => storage.set(storageKey(fingerprint), store.toJSON(fingerprint)), 300);
   };
 
+  const textRects = new Map(); // 画面に描いたコメントの四角(選ぶときの当たり判定用)
   const store = new AnnotationStore(() => {
     viewer.redraw();
     save();
+    syncUi(); // 取り消しなどで、選んでいた注釈がなくなったときに、ボタンの表示を合わせる
   });
 
   const getScale = () => {
@@ -50,15 +53,19 @@ export function setupTools({ viewer, getModel, getFileName }) {
     store,
     getScale,
     getSnap: () => snapIndex,
-    askText: (at) => askText(at),
+    askText: (at, initial) => askText(at, initial),
+    getTextRect: (id) => textRects.get(id) ?? null,
     onState: () => syncUi(),
   });
 
-  viewer.overlay = (frame) => drawAnnotations(frame, { items: store.items, draft: tools.draft, snap: tools.snap });
+  viewer.overlay = (frame) => {
+    if (!frame.forExport) textRects.clear();
+    drawAnnotations(frame, { items: store.items, draft: tools.draft, snap: tools.snap, selectedId: tools.selectedId, rects: textRects });
+  };
 
-  function askText() {
+  function askText(at, initial = "") {
     return new Promise((resolve) => {
-      el.txtInput.value = "";
+      el.txtInput.value = initial;
       el.txt.addEventListener("close", () => resolve(el.txt.returnValue === "ok" ? el.txtInput.value : null), { once: true });
       el.txt.returnValue = "cancel";
       el.txt.showModal();
@@ -75,12 +82,20 @@ export function setupTools({ viewer, getModel, getFileName }) {
     el.hint.textContent = HINTS[tools.mode] + (info && drafting ? `(${info.count}点)` : "");
     const need = info?.kind === "area" ? 3 : 2;
     el.done.disabled = !info || info.count < need;
+    const sel = tools.mode === "select" ? tools.selected : null;
+    el.copy.hidden = !sel;
+    el.del.hidden = !sel;
+    el.edit.hidden = sel?.kind !== "text";
+    if (sel) el.hint.textContent = "選択中: ドラッグで移動";
   }
 
   for (const b of el.bar.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
   el.done.addEventListener("click", () => tools.finish());
   el.cancel.addEventListener("click", () => tools.cancel());
   el.undo.addEventListener("click", () => tools.undo());
+  el.copy.addEventListener("click", () => tools.copySelected());
+  el.del.addEventListener("click", () => tools.deleteSelected());
+  el.edit.addEventListener("click", () => tools.editSelectedText());
   el.scale.addEventListener("change", () => {
     store.settings.scale = getScale();
     save();
