@@ -1,0 +1,29 @@
+{
+  "name": "JWWリーダー",
+  "short_name": "JWW",
+  "description": "JWW(Jw_cad)図面を開いて閲覧する。図面は端末の外に送信されません。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b63ce",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "file",
+          "accept": ["application/octet-stream", "application/x-jww", "application/x-jwc", ".jww", ".jwc"]
+        }
+      ]
+    }
+  }
+}

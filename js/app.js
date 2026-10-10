@@ -110,5 +110,35 @@ els.stage.addEventListener("drop", (ev) => {
   if (f) openFile(f);
 });
 
+// ---- PWA: オフライン対応と、他のアプリからの「共有」受け取り ----
+const SHARED_CACHE = "jww-reading-shared";
+
+async function openSharedFile() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has("shared")) return;
+  params.delete("shared");
+  const query = params.toString();
+  history.replaceState(null, "", location.pathname + (query ? `?${query}` : "") + location.hash);
+  try {
+    const cache = await caches.open(SHARED_CACHE);
+    const res = await cache.match(new URL("./__shared__", location.href).href);
+    if (!res) {
+      setStatus("共有されたファイルを受け取れませんでした。「開く」から選んでください。");
+      return;
+    }
+    const name = decodeURIComponent(res.headers.get("x-file-name") ?? "shared.jww");
+    const bytes = await res.arrayBuffer();
+    await cache.delete(new URL("./__shared__", location.href).href); // 端末内の一時コピーはすぐ消す
+    await openFile(new File([bytes], name));
+  } catch (err) {
+    setStatus(`共有されたファイルを開けませんでした: ${err?.message ?? err}`);
+  }
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch((err) => console.warn("Service Workerを登録できませんでした", err));
+}
+openSharedFile();
+
 // 検証用: ?debug を付けて開いたときだけ、画面から状態を確認できるようにする
 if (new URLSearchParams(location.search).has("debug")) window.__jww = { state, viewer };
