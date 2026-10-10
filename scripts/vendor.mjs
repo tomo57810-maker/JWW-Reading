@@ -44,4 +44,8 @@ src = `// 自動生成: scripts/vendor.mjs (ezjww ${JSON.parse(readFileSync(join
 writeFileSync(join(out, "ezjww.mjs"), src);
 copyFileSync(join(pkg, "wasm", "ezjww_wasm_bg.wasm"), join(out, "ezjww_wasm_bg.wasm"));
 copyFileSync(join(pkg, "LICENSE"), join(out, "LICENSE-ezjww"));
-console.log("vendor/ に出力しました:", names.length, "個のAPI");
+// Microsoft認証ライブラリ(OneDrive連携用)。ブラウザ用の単一ファイル版をそのまま置く。
+const msalPkg = join(root, "node_modules", "@azure", "msal-browser");
+copyFileSync(join(msalPkg, "lib", "msal-browser.min.js"), join(out, "msal-browser.min.js"));
+copyFileSync(join(msalPkg, "LICENSE"), join(out, "LICENSE-msal-browser"));
+console.log("vendor/ に出力しました:", names.length, "個のAPI + msal-browser");

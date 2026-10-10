@@ -10,6 +10,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
+    "@azure/msal-browser": "4.30.0",
     "ezjww": "0.6.0"
   }
 }

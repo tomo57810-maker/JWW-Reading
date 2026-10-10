@@ -2,6 +2,8 @@ import { init, readDrawing, readHeader } from "../vendor/ezjww.mjs";
 import { buildModel, explainNotDrawing } from "./drawing.js";
 import { Viewer } from "./viewer.js";
 import { LayerPanel } from "./layer-panel.js";
+import { OneDriveDialog } from "./onedrive-dialog.js";
+import { CLIENT_ID } from "./config.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -63,6 +65,11 @@ els.file.addEventListener("change", () => {
   if (f) openFile(f);
   els.file.value = "";
 });
+const oneDrive = new OneDriveDialog({ dialog: $("od"), onOpenFile: (file) => openFile(file), defaultClientId: CLIENT_ID });
+$("od-btn").addEventListener("click", () => oneDrive.open());
+// サインインの画面遷移から戻ってきたときは、続きの画面を自動で開く
+if (/[#&](code|error)=/.test(location.hash)) oneDrive.open();
+
 els.fit.addEventListener("click", () => viewer.fit());
 els.layersBtn.addEventListener("click", () => { els.panel.hidden = !els.panel.hidden; });
 els.panelClose.addEventListener("click", () => { els.panel.hidden = true; });

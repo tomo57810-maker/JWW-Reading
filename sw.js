@@ -1,5 +1,5 @@
 // Service Worker: ①オフラインでも開けるよう画面部品を保存 ②他のアプリ(OneDriveなど)から「共有」されたJWWを受け取る。
-const CACHE = "jww-reading-v6";
+const CACHE = "jww-reading-v8";
 const SHARED_CACHE = "jww-reading-shared";
 const SHARE_PATH = "./share-target";
 const SHARED_KEY = new URL("./__shared__", self.registration.scope).href;
@@ -13,6 +13,10 @@ const SHELL = [
   "./js/drawing.js",
   "./js/viewer.js",
   "./js/layer-panel.js",
+  "./js/onedrive.js",
+  "./js/onedrive-dialog.js",
+  "./js/config.js",
+  "./vendor/msal-browser.min.js",
   "./vendor/ezjww.mjs",
   "./vendor/ezjww_wasm_bg.wasm",
   "./icons/icon-192.png",
