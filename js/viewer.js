@@ -99,6 +99,15 @@ export class Viewer {
     this.#schedule();
   }
 
+  /** 選択中の図形の、途中の姿(伸縮のプレビューなど)に差し替える。変換はかけない。 */
+  setFloatingEntities(list) {
+    if (!this.floating) return;
+    this.floating.entities = list;
+    this.floating.xf = null;
+    this.floating.scene = this.#build(this.dark, list, null);
+    this.#schedule();
+  }
+
   /** 選択中の図形にかける変換(ドラッグ中の見た目)。nullなら、そのまま。 */
   setFloatTransform(xf) {
     if (this.floating) this.floating.xf = xf;

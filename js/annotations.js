@@ -1,6 +1,6 @@
 // 注釈(寸法・面積・ルート・赤ペン・コメント)。原本のJWWは書き換えず、座標(用紙mm)だけを別に保存する。
 
-export const KINDS = ["dim", "area", "route", "pen", "text"];
+export const KINDS = ["dim", "area", "route", "pen", "text", "mark"];
 
 export const COLORS = {
   dim: "#d81b60",
@@ -8,6 +8,7 @@ export const COLORS = {
   route: "#f57c00",
   pen: "#e53935",
   text: "#e53935",
+  mark: "#2e7d32",
 };
 
 let counter = 0;
@@ -74,6 +75,7 @@ export function isValidItem(item) {
     case "route": return Array.isArray(item.points) && item.points.length >= 2 && item.points.every(isPoint);
     case "pen": return Array.isArray(item.points) && item.points.length >= 2 && item.points.every(isPoint);
     case "text": return isPoint(item.at) && typeof item.text === "string" && item.text.length > 0;
+    case "mark": return isPoint(item.at);
     default: return false;
   }
 }
@@ -172,8 +174,8 @@ export function hitTest(items, p, tol) {
   let bestD = tol;
   for (const item of items) {
     let d = Infinity;
-    if (item.kind === "text") {
-      d = Math.hypot(p.x - item.at.x, p.y - item.at.y);
+    if (item.at) {
+      d = Math.hypot(p.x - item.at.x, p.y - item.at.y); // コメント・基準点: 置いた位置からの距離
     } else {
       const pts = item.points;
       for (let i = 1; i < pts.length; i++) d = Math.min(d, distToSegment(p, pts[i - 1], pts[i]));

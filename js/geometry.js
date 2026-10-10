@@ -57,48 +57,98 @@ export function distanceToSegment(p, a, b) {
 }
 
 /**
- * 図面の端点・中心点を格子に入れておき、タップした位置に近い点へ吸着させる(寸法を正確に取るため)。
+ * 図形の、吸着できる点(端点・中点・中心・四半点)。
+ * kind: "end"(端点) / "mid"(中点) / "center"(中心) / "quad"(四半点) / "point"(点)
+ */
+export function snapPointsOfEntity(e) {
+  const out = [];
+  const add = (x, y, kind) => {
+    if (Number.isFinite(x) && Number.isFinite(y)) out.push({ x, y, kind });
+  };
+  switch (e.type) {
+    case "LINE":
+      add(e.x1, e.y1, "end");
+      add(e.x2, e.y2, "end");
+      add((e.x1 + e.x2) / 2, (e.y1 + e.y2) / 2, "mid");
+      break;
+    case "ARC": {
+      const rad = (d) => (d * Math.PI) / 180;
+      const at = (a) => [e.center_x + e.radius * Math.cos(rad(a)), e.center_y + e.radius * Math.sin(rad(a))];
+      add(...at(e.start_angle), "end");
+      add(...at(e.end_angle), "end");
+      const span = (((e.end_angle - e.start_angle) % 360) + 360) % 360;
+      add(...at(e.start_angle + span / 2), "mid");
+      add(e.center_x, e.center_y, "center");
+      break;
+    }
+    case "CIRCLE":
+      add(e.center_x, e.center_y, "center");
+      add(e.center_x + e.radius, e.center_y, "quad");
+      add(e.center_x - e.radius, e.center_y, "quad");
+      add(e.center_x, e.center_y + e.radius, "quad");
+      add(e.center_x, e.center_y - e.radius, "quad");
+      break;
+    case "POINT": add(e.x, e.y, "point"); break;
+    case "SOLID":
+      add(e.x1, e.y1, "end");
+      add(e.x2, e.y2, "end");
+      add(e.x3, e.y3, "end");
+      add(e.x4, e.y4, "end");
+      break;
+    default: break;
+  }
+  return out;
+}
+
+/**
+ * 図面の端点・中点・中心点を格子に入れておき、タップした位置に近い点へ吸着させる(寸法や移動を正確にするため)。
+ * 点には、元の図形の番号(idx)を付けておき、選択中の図形(動かす側)を吸着の対象から外せるようにする。
  */
 export class SnapIndex {
   constructor(entities, cell = 5) {
     this.cell = cell;
     this.grid = new Map();
-    const add = (x, y) => {
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-      const key = `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
-      let bucket = this.grid.get(key);
-      if (!bucket) this.grid.set(key, (bucket = []));
-      bucket.push({ x, y });
-    };
-    for (const e of entities) {
-      switch (e.type) {
-        case "LINE": add(e.x1, e.y1); add(e.x2, e.y2); break;
-        case "ARC":
-        case "CIRCLE": add(e.center_x, e.center_y); break;
-        case "POINT": add(e.x, e.y); break;
-        case "SOLID": add(e.x1, e.y1); add(e.x2, e.y2); add(e.x3, e.y3); add(e.x4, e.y4); break;
-        default: break;
-      }
-    }
+    this.marks = []; // ユーザーが打った基準点(数が少ないので、並べて持つ)
+    entities.forEach((e, idx) => {
+      if (!e) return;
+      for (const p of snapPointsOfEntity(e)) this.#add(p.x, p.y, p.kind, idx);
+    });
   }
 
-  /** 半径radius(用紙mm)以内で、いちばん近い点を返す。なければnull。 */
-  nearest(p, radius) {
+  #add(x, y, kind, idx) {
+    const key = `${Math.floor(x / this.cell)},${Math.floor(y / this.cell)}`;
+    let bucket = this.grid.get(key);
+    if (!bucket) this.grid.set(key, (bucket = []));
+    bucket.push({ x, y, kind, idx });
+  }
+
+  /** 基準点(注釈の「点」)を差し替える。 */
+  setMarks(points) {
+    this.marks = points.map((p) => ({ x: p.x, y: p.y, kind: "mark", idx: -1 }));
+  }
+
+  /**
+   * 半径radius(用紙mm)以内で、いちばん近い点を返す。なければnull。
+   * @param {{ exclude?: Set<number> }} [opts] exclude: 対象から外す図形の番号
+   */
+  nearest(p, radius, { exclude = null } = {}) {
     const c = this.cell;
     const x0 = Math.floor((p.x - radius) / c), x1 = Math.floor((p.x + radius) / c);
     const y0 = Math.floor((p.y - radius) / c), y1 = Math.floor((p.y + radius) / c);
     let best = null;
     let bestD = radius;
+    const consider = (q) => {
+      if (exclude && exclude.has(q.idx)) return;
+      const d = distance(p, q);
+      if (d < bestD || (d === bestD && best && q.kind === "mark")) { best = q; bestD = d; }
+    };
     for (let gx = x0; gx <= x1; gx++) {
       for (let gy = y0; gy <= y1; gy++) {
         const bucket = this.grid.get(`${gx},${gy}`);
-        if (!bucket) continue;
-        for (const q of bucket) {
-          const d = distance(p, q);
-          if (d <= bestD) { best = q; bestD = d; }
-        }
+        if (bucket) for (const q of bucket) consider(q);
       }
     }
+    for (const m of this.marks) consider(m);
     return best;
   }
 }

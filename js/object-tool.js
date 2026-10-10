@@ -1,24 +1,36 @@
 // 図面の図形そのものを選んで、移動・回転・拡大縮小・複製・削除するツール。
 // 操作は EditStore に「記録」として積むだけで、原本のJWWは書き換えない。
-import { applyToPoint, entityBounds, pickEntity, pickInRect, unionBounds } from "./edits.js";
+import { applyToPoint, entityBounds, pickEntity, pickInRect, stretchEntity, unionBounds } from "./edits.js";
+import { SnapIndex, snapPointsOfEntity } from "./geometry.js";
 
 const HANDLE_PX = 22; // 角の取っ手を押せる範囲(画面px、半径)
 const ROTATE_OFFSET_PX = 34; // 回転の取っ手を、枠の上端から離す距離
 const TAP_PX = 6; // これより小さいドラッグは、タップとみなす
 const PICK_PX = 12; // タップで図形を選ぶときの許容距離
 const SNAP_ANGLE = (15 * Math.PI) / 180;
+const SNAP_PX = 14; // 移動のとき、この距離(画面px)以内の点に吸着する
+const MAX_KEYS = 300; // 吸着を調べる「動かす側の点」の上限
 
 export class ObjectTool {
   /**
    * @param {object} deps
    * @param {import("./viewer.js").Viewer} deps.viewer
    * @param {import("./edits.js").EditStore} deps.edits
+   * @param {() => (import("./geometry.js").SnapIndex | null)} [deps.getSnap] 吸着の対象(端点・中点・基準点など)
+   * @param {() => number} [deps.getScale] 縮尺の分母(数値入力は実寸mmで受けるため、用紙mmに直す)
+   * @param {(title: string, hint?: string) => Promise<{dx:number, dy:number} | null>} [deps.askOffset] 横・縦の移動量(実寸mm)を入力してもらう
    * @param {() => void} [deps.onState]
    */
-  constructor({ viewer, edits, onState = () => {} }) {
+  constructor({ viewer, edits, getSnap = () => null, getScale = () => 100, askOffset = async () => null, onState = () => {} }) {
     this.viewer = viewer;
     this.edits = edits;
+    this.getSnap = getSnap;
+    this.getScale = getScale;
+    this.askOffset = askOffset;
     this.onState = onState;
+    this.snapHit = null; // いま吸着している点(表示用)
+    this.baseMove = null; // 基点移動: { stage: "base"|"dest", base }
+    this.stretch = null; // 伸縮: { stage: "window"|"offset", win, dx, dy }
     this.selection = []; // 選んでいる図形の番号(edits.entities の添字)
     this.additive = false; // 追加ボタン: 選び直さず、足す(すでに選んでいれば外す)
     this.drag = null; // { kind: "move"|"scale"|"rotate"|"marquee", ... }
@@ -31,6 +43,46 @@ export class ObjectTool {
   }
 
   #visible = (e) => !this.viewer.hiddenLayers.has(e.layer);
+
+  get selectionSet() {
+    return new Set(this.selection);
+  }
+
+  /** 動かす側の「吸着に使う点」: 図形の端点・中点・中心と、枠の角・辺の中点・中心。 */
+  #keyPoints(onlyInside = null) {
+    const pts = [];
+    for (const i of this.selection) {
+      const e = this.edits.entities[i];
+      if (e) for (const p of snapPointsOfEntity(e)) pts.push(p);
+    }
+    const b = this.bounds();
+    if (b) {
+      const xs = [b.x0, (b.x0 + b.x1) / 2, b.x1];
+      const ys = [b.y0, (b.y0 + b.y1) / 2, b.y1];
+      for (const x of xs) for (const y of ys) pts.push({ x, y, kind: "bbox" });
+    }
+    const inside = onlyInside ? pts.filter((p) => p.x >= onlyInside.x0 && p.x <= onlyInside.x1 && p.y >= onlyInside.y0 && p.y <= onlyInside.y1) : pts;
+    if (inside.length <= MAX_KEYS) return inside;
+    const step = Math.ceil(inside.length / MAX_KEYS);
+    return inside.filter((_, k) => k % step === 0);
+  }
+
+  /** 動かす量(dx, dy)で、動かす側のどれかの点が、他の図形の点に近づいたら、ぴったり重なるよう補正する。 */
+  #snapMove(keys, dx, dy) {
+    const snap = this.getSnap();
+    if (!snap) return null;
+    const tol = SNAP_PX / this.viewer.view.s;
+    const exclude = this.selectionSet;
+    let best = null;
+    for (const k of keys) {
+      const moved = { x: k.x + dx, y: k.y + dy };
+      const t = snap.nearest(moved, tol, { exclude });
+      if (!t) continue;
+      const d = Math.hypot(t.x - moved.x, t.y - moved.y);
+      if (!best || d < best.d) best = { d, ax: t.x - moved.x, ay: t.y - moved.y, target: t, from: k };
+    }
+    return best;
+  }
 
   /** 選んでいる図形を囲む四角(用紙mm)。 */
   bounds() {
@@ -45,6 +97,9 @@ export class ObjectTool {
   }
 
   clearSelection() {
+    this.baseMove = null;
+    this.stretch = null;
+    this.snapHit = null;
     this.select([]);
   }
 
@@ -92,6 +147,21 @@ export class ObjectTool {
   }
 
   down(point) {
+    if (this.baseMove) {
+      this.drag = { kind: "basetap", at: point };
+      this.#showCandidate(point);
+      return;
+    }
+    if (this.stretch?.stage === "offset") {
+      const keys = this.#keyPoints(this.stretch.win);
+      this.drag = { kind: "stretchdrag", start: point.world, at: point, base0: { dx: this.stretch.dx, dy: this.stretch.dy }, keys, moved: false };
+      return;
+    }
+    if (this.stretch?.stage === "window") {
+      this.drag = { kind: "marquee", start: point.world, startScreen: point, moved: false, forStretch: true };
+      this.marquee = { x0: point.world.x, y0: point.world.y, x1: point.world.x, y1: point.world.y };
+      return;
+    }
     const handle = this.hasSelection ? this.#hitHandle(point) : null;
     if (handle) {
       this.drag = { ...handle, moved: false, at: point };
@@ -101,18 +171,69 @@ export class ObjectTool {
     this.marquee = { x0: point.world.x, y0: point.world.y, x1: point.world.x, y1: point.world.y };
   }
 
+  /** 基点移動で、指の下にある吸着の候補を、印として見せる。 */
+  #showCandidate(point) {
+    const snap = this.getSnap();
+    const tol = (SNAP_PX * 1.3) / this.viewer.view.s;
+    if (this.baseMove.stage === "base") {
+      // 動かす側(選択中の図形)の端点・中点・中心から選ぶ
+      const own = new SnapIndex(this.selection.map((i) => this.edits.entities[i]));
+      this.snapHit = own.nearest(point.world, tol) ?? this.#nearestKey(point.world, tol);
+    } else {
+      this.snapHit = snap?.nearest(point.world, tol, { exclude: this.selectionSet }) ?? null;
+    }
+  }
+
+  #nearestKey(p, tol) {
+    let best = null;
+    for (const k of this.#keyPoints()) {
+      const d = Math.hypot(k.x - p.x, k.y - p.y);
+      if (d <= tol && (!best || d < best.d)) best = { ...k, d };
+    }
+    return best;
+  }
+
   move(point) {
     const d = this.drag;
     if (!d) return;
+    if (d.kind === "basetap") {
+      this.#showCandidate(point);
+      return;
+    }
+    if (d.kind === "stretchdrag") {
+      let dx = d.base0.dx + (point.world.x - d.start.x);
+      let dy = d.base0.dy + (point.world.y - d.start.y);
+      const hit = this.#snapMove(d.keys, dx, dy);
+      if (hit) {
+        dx += hit.ax;
+        dy += hit.ay;
+      }
+      this.snapHit = hit?.target ?? null;
+      this.stretch.dx = dx;
+      this.stretch.dy = dy;
+      d.moved = true;
+      this.#previewStretch();
+      return;
+    }
     const dxs = point.sx - (d.at?.sx ?? d.startScreen?.sx ?? point.sx);
     const dys = point.sy - (d.at?.sy ?? d.startScreen?.sy ?? point.sy);
     if (!d.moved && Math.hypot(dxs, dys) < TAP_PX) return;
     d.moved = true;
     const { cx, cy } = d.base ?? {};
     switch (d.kind) {
-      case "move":
-        this.xf = { cx, cy, dx: point.world.x - d.start.x, dy: point.world.y - d.start.y, theta: 0, s: 1 };
+      case "move": {
+        let dx = point.world.x - d.start.x;
+        let dy = point.world.y - d.start.y;
+        d.keys ??= this.#keyPoints();
+        const hit = this.#snapMove(d.keys, dx, dy); // 動かす側の端点・中点が、他の点にぴったり重なるように補正
+        if (hit) {
+          dx += hit.ax;
+          dy += hit.ay;
+        }
+        this.snapHit = hit?.target ?? null;
+        this.xf = { cx, cy, dx, dy, theta: 0, s: 1 };
         break;
+      }
       case "scale": {
         const dist = Math.hypot(point.world.x - cx, point.world.y - cy);
         const s = Math.min(50, Math.max(0.05, dist / Math.max(d.startDist, 1e-9)));
@@ -138,11 +259,29 @@ export class ObjectTool {
   up(point) {
     const d = this.drag;
     this.drag = null;
+    this.snapHit = d?.kind === "basetap" ? this.snapHit : null;
     if (!d) return;
+    if (d.kind === "basetap") {
+      this.#baseTap(point);
+      this.viewer.redraw();
+      return;
+    }
+    if (d.kind === "stretchdrag") {
+      this.snapHit = null;
+      this.onState();
+      this.viewer.redraw();
+      return;
+    }
     if (d.kind === "marquee") {
       const m = this.marquee;
       this.marquee = null;
-      if (d.moved) this.#selectRect(m);
+      if (d.forStretch) {
+        if (d.moved && Math.abs(m.x1 - m.x0) > 0 && Math.abs(m.y1 - m.y0) > 0) {
+          this.stretch = { stage: "offset", win: { x0: Math.min(m.x0, m.x1), y0: Math.min(m.y0, m.y1), x1: Math.max(m.x0, m.x1), y1: Math.max(m.y0, m.y1) }, dx: 0, dy: 0 };
+          this.#previewStretch();
+          this.onState();
+        }
+      } else if (d.moved) this.#selectRect(m);
       else this.#tapSelect(point);
       this.viewer.redraw();
       return;
@@ -158,10 +297,11 @@ export class ObjectTool {
   }
 
   abort() {
-    // 2本目の指が触れた: ドラッグ中の変換は取りやめ(元の位置に戻す)
+    // 2本目の指が触れた: ドラッグ中の変換は取りやめ(元の位置に戻す)。基点移動・伸縮の途中経過は残す
     this.drag = null;
     this.marquee = null;
     this.xf = null;
+    this.snapHit = null;
     this.viewer.setFloatTransform(null);
   }
 
@@ -192,6 +332,85 @@ export class ObjectTool {
       else set.add(i);
     }
     return this.select([...set]);
+  }
+
+  // ---- 基点移動: 動かす側の点(端点・中点・中心)を指定し、移動先の点(他の図形の点・基準点)を指定する ----
+  beginBaseMove() {
+    if (!this.hasSelection) return;
+    this.cancelModes();
+    this.baseMove = { stage: "base", base: null };
+    this.onState();
+  }
+
+  #baseTap(point) {
+    const hit = this.snapHit;
+    if (this.baseMove.stage === "base") {
+      if (!hit) return; // 点に吸着できなかった: もう一度、選択中の図形の端点・中点をタップしてもらう
+      this.baseMove = { stage: "dest", base: { x: hit.x, y: hit.y } };
+      this.snapHit = null;
+      this.onState();
+      return;
+    }
+    const dest = this.snapHit ?? point.world; // 吸着できなければ、タップした位置そのまま
+    const b = this.baseMove.base;
+    this.baseMove = null;
+    this.snapHit = null;
+    const c = this.bounds();
+    this.#commit({ type: "xform", xf: { cx: (c.x0 + c.x1) / 2, cy: (c.y0 + c.y1) / 2, dx: dest.x - b.x, dy: dest.y - b.y, theta: 0, s: 1 } });
+    this.onState();
+  }
+
+  // ---- 伸縮(ストレッチ): 窓で囲んだ側の点だけを動かして、寸法を変える ----
+  beginStretch() {
+    if (!this.hasSelection) return;
+    this.cancelModes();
+    this.stretch = { stage: "window", win: null, dx: 0, dy: 0 };
+    this.onState();
+  }
+
+  #stretched() {
+    const st = this.stretch;
+    return this.selection.map((i) => stretchEntity(this.edits.entities[i], st.win, st.dx, st.dy));
+  }
+
+  #previewStretch() {
+    this.viewer.setFloatingEntities(this.#stretched());
+  }
+
+  /** 数値で、動かす量(実寸mm)を入力してもらう。 */
+  async askStretchOffset() {
+    if (this.stretch?.stage !== "offset") return;
+    const scale = this.getScale();
+    const r = await this.askOffset("伸縮する量(実寸mm)", "窓で囲んだ側を、横(→が+)・縦(↑が+)に動かします。例: 幅を1200→900にするなら、横 -300");
+    if (!r) return;
+    this.stretch.dx = r.dx / scale; // 実寸mm → 用紙mm
+    this.stretch.dy = r.dy / scale;
+    this.#previewStretch();
+    this.onState();
+  }
+
+  /** 伸縮を確定する(窓の位置と動かした量を、記録として残す)。 */
+  finish() {
+    const st = this.stretch;
+    if (!st || st.stage !== "offset" || (st.dx === 0 && st.dy === 0)) return false;
+    const ids = [...this.selection];
+    this.edits.add({ type: "stretch", ids, win: st.win, dx: st.dx, dy: st.dy });
+    this.stretch = null;
+    this.snapHit = null;
+    this.viewer.entities = this.edits.entities;
+    this.select(ids);
+    return true;
+  }
+
+  /** 基点移動・伸縮の途中経過をやめる。 */
+  cancelModes() {
+    const had = this.baseMove || this.stretch;
+    this.baseMove = null;
+    this.stretch = null;
+    this.snapHit = null;
+    this.marquee = null;
+    if (had) this.select(this.selection); // 伸縮のプレビューを、元の図形に戻す
+    this.onState();
   }
 
   /** 選んだ図形を、中心のまわりに回す(度)。 */
@@ -248,7 +467,31 @@ export class ObjectTool {
       ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
       ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
     }
-    const f = this.hasSelection ? this.#frame() : null;
+    if (this.stretch?.win) {
+      const w = this.stretch.win;
+      const a = scr({ x: w.x0, y: w.y1 });
+      const b = scr({ x: w.x1, y: w.y0 });
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = "#2e7d32";
+      ctx.fillStyle = "rgba(46,125,50,0.10)";
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      ctx.setLineDash([]);
+    }
+    if (this.baseMove?.base) {
+      const b = scr(this.baseMove.base);
+      ctx.strokeStyle = "#d81b60";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 9, 0, Math.PI * 2);
+      ctx.moveTo(b.x - 14, b.y);
+      ctx.lineTo(b.x + 14, b.y);
+      ctx.moveTo(b.x, b.y - 14);
+      ctx.lineTo(b.x, b.y + 14);
+      ctx.stroke();
+    }
+    const f = this.hasSelection && !this.stretch && !this.baseMove ? this.#frame() : null;
     if (f) {
       const pts = f.corners.map(scr);
       ctx.setLineDash([6, 4]);

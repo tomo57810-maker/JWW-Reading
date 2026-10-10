@@ -32,10 +32,18 @@ test("吸着: 近い端点・中心点に寄せる。遠ければ null", () => {
     { type: "LINE", x1: 0, y1: 0, x2: 100, y2: 0 },
     { type: "CIRCLE", center_x: 50, center_y: 50, radius: 3 },
   ]);
-  assert.deepEqual(idx.nearest({ x: 1, y: 1 }, 3), { x: 0, y: 0 });
-  assert.deepEqual(idx.nearest({ x: 99, y: -1 }, 3), { x: 100, y: 0 });
-  assert.deepEqual(idx.nearest({ x: 51, y: 49 }, 3), { x: 50, y: 50 });
+  const xy = (q) => q && { x: q.x, y: q.y, kind: q.kind };
+  assert.deepEqual(xy(idx.nearest({ x: 1, y: 1 }, 3)), { x: 0, y: 0, kind: "end" });
+  assert.deepEqual(xy(idx.nearest({ x: 99, y: -1 }, 3)), { x: 100, y: 0, kind: "end" });
+  assert.deepEqual(xy(idx.nearest({ x: 51, y: 49 }, 3)), { x: 50, y: 50, kind: "center" });
   assert.equal(idx.nearest({ x: 30, y: 30 }, 3), null);
+  // 線の中点にも吸着する
+  assert.deepEqual(xy(idx.nearest({ x: 49, y: 1 }, 3)), { x: 50, y: 0, kind: "mid" });
+  // 選択中の図形(番号0)を対象から外すと、その点には吸着しない
+  assert.equal(idx.nearest({ x: 1, y: 1 }, 3, { exclude: new Set([0]) }), null);
+  // 基準点は、図形の点より優先され、どの図形にも属さない
+  idx.setMarks([{ x: 10, y: 10 }]);
+  assert.deepEqual(xy(idx.nearest({ x: 9, y: 9 }, 3, { exclude: new Set([0, 1]) })), { x: 10, y: 10, kind: "mark" });
 });
 
 test("注釈: 追加・取り消し・全消去・不正な項目の拒否", () => {

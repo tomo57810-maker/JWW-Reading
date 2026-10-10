@@ -38,6 +38,7 @@
       <button class="tool" type="button" data-tool="dim" aria-pressed="false">寸法</button>
       <button class="tool" type="button" data-tool="area" aria-pressed="false">面積</button>
       <button class="tool" type="button" data-tool="route" aria-pressed="false">ルート</button>
+      <button class="tool" type="button" data-tool="mark" aria-pressed="false">基準点</button>
       <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
       <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
       <button class="tool" type="button" data-tool="erase" aria-pressed="false">消す</button>
@@ -46,6 +47,9 @@
       <label class="scale">縮尺 1/<input id="scale" type="number" inputmode="numeric" min="1" step="1" value="100" aria-label="縮尺の分母"></label>
       <span id="tool-hint" class="hint"></span>
       <button id="t-add" class="btn small" type="button" aria-pressed="false" hidden>追加選択</button>
+      <button id="t-base" class="btn small" type="button" hidden>基点移動</button>
+      <button id="t-stretch" class="btn small" type="button" hidden>伸縮</button>
+      <button id="t-num" class="btn small" type="button" hidden>数値</button>
       <button id="t-rl" class="btn small" type="button" hidden>↺90°</button>
       <button id="t-rr" class="btn small" type="button" hidden>↻90°</button>
       <button id="t-big" class="btn small" type="button" hidden>×1.25</button>
@@ -85,6 +89,19 @@
       <button class="btn small" type="button" data-od-close aria-label="閉じる">×</button>
     </div>
     <div class="od-body" data-od-body></div>
+  </dialog>
+
+  <dialog id="off" class="od">
+    <form method="dialog" class="od-body">
+      <strong id="off-title"></strong>
+      <p id="off-hint" class="note"></p>
+      <label class="opt">横(→が+) <input id="off-dx" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:8em"> mm</label>
+      <label class="opt">縦(↑が+) <input id="off-dy" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:8em"> mm</label>
+      <div class="row">
+        <button class="btn" value="cancel" formnovalidate>やめる</button>
+        <button class="btn primary" value="ok">決定</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="txt" class="od">

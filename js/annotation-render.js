@@ -2,6 +2,7 @@
 import { COLORS, centroid } from "./annotations.js";
 import { polylineLength, polygonArea, realLength, realArea, formatLength, formatArea } from "./geometry.js";
 
+const SNAP_NAMES = { end: "端点", mid: "中点", center: "中心", quad: "四半点", mark: "基準点", point: "点" };
 const FONT = '"BIZ UDPGothic", "Noto Sans JP", "Yu Gothic", sans-serif';
 
 /** 寸法・ルートの文字(実寸の長さ)。 */
@@ -64,6 +65,29 @@ export function drawAnnotations(frame, { items, draft = null, snap = null, selec
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.setLineDash(isDraft ? [px(6), px(4)] : []);
+    if (item.kind === "mark") {
+      // 基準点: 十字と丸(吸着の対象になる)。選択中は、黄色い丸を敷く
+      const at = toScreen(item.at);
+      if (item.id === selectedId && !forExport) {
+        ctx.fillStyle = "rgba(255,214,0,0.6)";
+        ctx.beginPath();
+        ctx.arc(at.x, at.y, 16, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = px(2);
+      ctx.setLineDash([]);
+      const r = px(9);
+      path([{ x: at.x - r, y: at.y }, { x: at.x + r, y: at.y }]);
+      ctx.stroke();
+      path([{ x: at.x, y: at.y - r }, { x: at.x, y: at.y + r }]);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, px(4), 0, Math.PI * 2);
+      ctx.stroke();
+      if (item.note) label(item.note, { x: at.x, y: at.y - px(18) }, color);
+      return;
+    }
     if (item.kind === "text") {
       const at = toScreen(item.at);
       ctx.font = `bold ${px(15)}px ${FONT}`;
@@ -153,11 +177,33 @@ export function drawAnnotations(frame, { items, draft = null, snap = null, selec
   if (draft?.item.points?.length && draft.item.kind !== "pen") draft.item.points.forEach((p) => dot(toScreen(p), COLORS[draft.item.kind]));
 
   if (snap && !forExport) {
-    const s = toScreen(snap);
+    // 吸着の印: 端点=四角、中点=三角、中心・四半点=丸、基準点=十字つきの丸。横に種類の名前を出す
+    const sp = toScreen(snap);
     ctx.strokeStyle = "#00acc1";
+    ctx.fillStyle = "#00acc1";
     ctx.lineWidth = 2;
     ctx.setLineDash([]);
-    ctx.strokeRect(s.x - 6, s.y - 6, 12, 12);
+    if (snap.kind === "mid") {
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y - 8);
+      ctx.lineTo(sp.x + 8, sp.y + 6);
+      ctx.lineTo(sp.x - 8, sp.y + 6);
+      ctx.closePath();
+      ctx.stroke();
+    } else if (snap.kind === "center" || snap.kind === "quad" || snap.kind === "mark") {
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 7, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(sp.x - 6, sp.y - 6, 12, 12);
+    }
+    const name = SNAP_NAMES[snap.kind];
+    if (name) {
+      ctx.font = `bold 12px ${FONT}`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(name, sp.x + 12, sp.y - 12);
+    }
   }
   ctx.restore();
 }

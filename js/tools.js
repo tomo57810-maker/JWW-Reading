@@ -6,7 +6,7 @@ const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
-export const MODES = ["move", "obj", "select", "dim", "area", "route", "pen", "text", "erase"];
+export const MODES = ["move", "obj", "select", "dim", "area", "route", "mark", "pen", "text", "erase"];
 
 export class ToolController {
   /**
@@ -16,15 +16,17 @@ export class ToolController {
    * @param {() => number} deps.getScale 縮尺の分母(例: 100)
    * @param {() => import("./geometry.js").SnapIndex | null} deps.getSnap
    * @param {(at: {x:number,y:number}, initial?: string) => Promise<string | null>} deps.askText コメントの文字を入力してもらう
+   * @param {(title: string, hint?: string) => Promise<{dx:number, dy:number} | null>} [deps.askOffset] 横・縦の距離(実寸mm)を入力してもらう
    * @param {(id: string) => {x:number,y:number,w:number,h:number} | null} [deps.getTextRect] 画面に描いたコメントの四角(画面px)。選ぶときの当たり判定に使う
    * @param {() => void} [deps.onState] モードや作図中の状態が変わったとき
    */
-  constructor({ viewer, store, getScale, getSnap, askText, getTextRect = () => null, objectTool = null, onState = () => {} }) {
+  constructor({ viewer, store, getScale, getSnap, askText, askOffset = async () => null, getTextRect = () => null, objectTool = null, onState = () => {} }) {
     this.viewer = viewer;
     this.store = store;
     this.getScale = getScale;
     this.getSnap = getSnap;
     this.askText = askText;
+    this.askOffset = askOffset;
     this.getTextRect = getTextRect;
     this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「図形」モード)
     this.onState = onState;
@@ -45,7 +47,7 @@ export class ToolController {
     if (!MODES.includes(mode)) return;
     this.cancel();
     this.selectedId = null;
-    if (this.mode === "obj") this.objectTool?.clearSelection(); // 図形モードを出るとき、選択を解除する
+    if (this.mode === "obj") this.objectTool?.clearSelection(); // 図形モードを出るとき、選択と途中の操作を解除する
     this.mode = mode;
     this.viewer.tool = mode === "move" ? null : mode === "obj" ? this.objectTool : this;
     this.viewer.toolPointerId = null;
@@ -212,6 +214,7 @@ export class ToolController {
       case "dim":
       case "area":
       case "route":
+      case "mark":
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
         break;
@@ -242,6 +245,7 @@ export class ToolController {
       case "dim":
       case "area":
       case "route":
+      case "mark":
         // 指を動かしている間も、吸着の位置と途中の長さを見せる(離した位置が採用される)
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
@@ -283,6 +287,19 @@ export class ToolController {
           this.store.add({ ...this.draft.item });
           this.draft = null;
         }
+        this.onState();
+        break;
+      }
+      case "mark": {
+        if (moved > TAP_MOVE_PX * 2) break;
+        const base = this.#snapPoint(point);
+        const scale = this.getScale();
+        const r = await this.askOffset("基準点を打つ", "基点(いまタップした点)から、横(→が+)・縦(↑が+)に、実寸で何mm離れた所に打ちますか。0・0なら、基点そのものに打ちます。");
+        this.snap = null;
+        if (!r) break;
+        const at = { x: base.x + r.dx / scale, y: base.y + r.dy / scale };
+        const note = [r.dx ? `横${r.dx}` : "", r.dy ? `縦${r.dy}` : ""].filter(Boolean).join(" ");
+        this.store.add({ kind: "mark", at, ...(note ? { note } : {}) });
         this.onState();
         break;
       }

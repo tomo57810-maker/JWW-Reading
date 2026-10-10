@@ -56,6 +56,41 @@ export function transformEntity(e, xf) {
   }
 }
 
+/**
+ * 伸縮(ストレッチ): 窓(四角)の中にある点だけを(dx, dy)動かす。
+ * 線・立体は、窓に入っている端点だけが動く(窓の外の端点は動かない)ので、長さが変わる。
+ * 円・円弧・文字・点は、中心(または基準点)が窓に入っていれば、まるごと動く。
+ */
+export function stretchEntity(e, win, dx, dy) {
+  const inside = (x, y) => x >= win.x0 && x <= win.x1 && y >= win.y0 && y <= win.y1;
+  switch (e.type) {
+    case "LINE": {
+      const a = inside(e.x1, e.y1);
+      const b = inside(e.x2, e.y2);
+      return a || b ? { ...e, x1: e.x1 + (a ? dx : 0), y1: e.y1 + (a ? dy : 0), x2: e.x2 + (b ? dx : 0), y2: e.y2 + (b ? dy : 0) } : e;
+    }
+    case "SOLID": {
+      const out = { ...e };
+      for (const k of [1, 2, 3, 4]) {
+        if (inside(e[`x${k}`], e[`y${k}`])) {
+          out[`x${k}`] = e[`x${k}`] + dx;
+          out[`y${k}`] = e[`y${k}`] + dy;
+        }
+      }
+      return out;
+    }
+    case "CIRCLE":
+    case "ARC":
+      return inside(e.center_x, e.center_y) ? { ...e, center_x: e.center_x + dx, center_y: e.center_y + dy } : e;
+    case "POINT":
+      return inside(e.x, e.y) ? { ...e, x: e.x + dx, y: e.y + dy } : e;
+    case "TEXT":
+      return inside(e.x, e.y) ? { ...e, x: e.x + dx, y: e.y + dy, end_x: (e.end_x ?? e.x) + dx, end_y: (e.end_y ?? e.y) + dy } : e;
+    default:
+      return e;
+  }
+}
+
 /** 図形の外接する四角(用紙mm)。扱えない種類は null。 */
 export function entityBounds(e) {
   switch (e.type) {
@@ -181,6 +216,7 @@ export function pickInRect(entities, rect, isVisible = () => true) {
 /**
  * 編集の記録。原本の図形の並び(base)に、操作を順に当てはめた結果(entities)を作る。
  *   { type: "xform", ids: [...], xf }  図形を相似変換する
+ *   { type: "stretch", ids: [...], win: {x0,y0,x1,y1}, dx, dy }  窓の中の点だけを動かす(伸縮)
  *   { type: "delete", ids: [...] }     図形を消す
  *   { type: "copy", ids: [...], xf, newIds: [...] }  変換した複製を、末尾に追加する
  */
@@ -200,6 +236,9 @@ export class EditStore {
     switch (op.type) {
       case "xform":
         for (const id of op.ids) if (this.entities[id]) this.entities[id] = transformEntity(this.entities[id], op.xf);
+        break;
+      case "stretch":
+        for (const id of op.ids) if (this.entities[id]) this.entities[id] = stretchEntity(this.entities[id], op.win, op.dx, op.dy);
         break;
       case "delete":
         for (const id of op.ids) this.entities[id] = null;
@@ -260,8 +299,9 @@ export class EditStore {
       return { ok: false, reason: "図形の数が一致しません" };
     }
     for (const op of data.ops) {
-      if (!["xform", "delete", "copy"].includes(op?.type) || !Array.isArray(op.ids)) continue;
-      if (op.type !== "delete" && !(op.xf && Number.isFinite(op.xf.s) && Number.isFinite(op.xf.theta))) continue;
+      if (!["xform", "delete", "copy", "stretch"].includes(op?.type) || !Array.isArray(op.ids)) continue;
+      if ((op.type === "xform" || op.type === "copy") && !(op.xf && Number.isFinite(op.xf.s) && Number.isFinite(op.xf.theta))) continue;
+      if (op.type === "stretch" && !(op.win && [op.win.x0, op.win.y0, op.win.x1, op.win.y1, op.dx, op.dy].every(Number.isFinite))) continue;
       this.ops.push(op);
       this.#apply(op);
     }

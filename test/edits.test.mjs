@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyToPoint, transformEntity, entityBounds, pickEntity, pickInRect, distanceToEntity, EditStore, unionBounds } from "../js/edits.js";
+import { applyToPoint, transformEntity, stretchEntity, entityBounds, pickEntity, pickInRect, distanceToEntity, EditStore, unionBounds } from "../js/edits.js";
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -78,4 +78,31 @@ test("円弧の外接する四角: 90度の弧は、四分円の範囲(円全体
   const c = entityBounds({ type: "ARC", center_x: 0, center_y: 0, radius: 10, start_angle: 350, end_angle: 20 });
   near(c.x1, 10);
   assert.ok(c.y0 < 0 && c.y1 > 0);
+});
+
+test("伸縮: 窓の中の端点だけが動き、長さが変わる(W1200 → W900)", () => {
+  // 幅1200の流し台(用紙mm、縮尺1/1なら実寸と同じ)。右半分を囲んで、左へ300動かす
+  const sink = [
+    { type: "LINE", x1: 0, y1: 0, x2: 1200, y2: 0 }, // 前面
+    { type: "LINE", x1: 0, y1: 0, x2: 0, y2: 600 }, // 左側面
+    { type: "LINE", x1: 1200, y1: 0, x2: 1200, y2: 600 }, // 右側面
+    { type: "LINE", x1: 0, y1: 600, x2: 1200, y2: 600 }, // 背面
+    { type: "CIRCLE", center_x: 900, center_y: 300, radius: 50 }, // 右側の排水口(窓の中: 動く)
+    { type: "CIRCLE", center_x: 300, center_y: 300, radius: 50 }, // 左側の排水口(窓の外: 動かない)
+  ];
+  const win = { x0: 800, y0: -10, x1: 1300, y1: 700 };
+  const out = sink.map((e) => stretchEntity(e, win, -300, 0));
+  assert.deepEqual([out[0].x1, out[0].x2], [0, 900]); // 前面は 1200 → 900
+  assert.deepEqual([out[3].x1, out[3].x2], [0, 900]);
+  assert.deepEqual([out[1].x1, out[1].x2], [0, 0]); // 左側面は動かない
+  assert.deepEqual([out[2].x1, out[2].x2], [900, 900]); // 右側面は、まるごと左へ
+  assert.equal(out[4].center_x, 600); // 右の排水口は動く
+  assert.equal(out[5].center_x, 300); // 左は動かない
+  // 記録として保存・復元しても、同じ結果
+  const s = new EditStore(sink);
+  s.add({ type: "stretch", ids: [0, 1, 2, 3, 4, 5], win, dx: -300, dy: 0 });
+  const s2 = new EditStore(sink);
+  s2.load(JSON.parse(JSON.stringify(s.toJSON())));
+  assert.deepEqual(s2.entities, out);
+  assert.equal(sink[0].x2, 1200); // 原本は不変
 });

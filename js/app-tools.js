@@ -12,6 +12,7 @@ const $ = (id) => document.getElementById(id);
 const HINTS = {
   move: "指で動かす・2本指で拡大",
   obj: "なぞって範囲選択/タップで1つ選ぶ。枠をドラッグで移動、角で拡大、○で回転",
+  mark: "基準にする点をタップ→距離(実寸mm)を入力",
   select: "注釈をタップで選び、ドラッグで移動",
   dim: "2点をタップ(端点に吸着)",
   area: "角を順にタップ→「完了」",
@@ -24,6 +25,8 @@ const HINTS = {
 export function setupTools({ viewer, getModel, getFileName }) {
   const el = {
     bar: $("tools"), scale: $("scale"), hint: $("tool-hint"),
+    base: $("t-base"), stretch: $("t-stretch"), num: $("t-num"),
+    off: $("off"), offTitle: $("off-title"), offHint: $("off-hint"), offDx: $("off-dx"), offDy: $("off-dy"),
     add: $("t-add"), rl: $("t-rl"), rr: $("t-rr"), big: $("t-big"), small: $("t-small"),
     done: $("t-done"), cancel: $("t-cancel"), copy: $("t-copy"), edit: $("t-edit"), del: $("t-del"), undo: $("t-undo"), exportBtn: $("t-export"),
     txt: $("txt"), txtInput: $("txt-input"),
@@ -48,9 +51,11 @@ export function setupTools({ viewer, getModel, getFileName }) {
   };
 
   const textRects = new Map(); // 画面に描いたコメントの四角(選ぶときの当たり判定用)
+  const refreshMarks = () => snapIndex?.setMarks(store.items.filter((i) => i.kind === "mark").map((i) => i.at));
   const store = new AnnotationStore(() => {
     viewer.redraw();
     save();
+    refreshMarks(); // 基準点は、寸法や移動の吸着の対象にする
     syncUi(); // 取り消しなどで、選んでいた注釈がなくなったときに、ボタンの表示を合わせる
   });
 
@@ -59,7 +64,14 @@ export function setupTools({ viewer, getModel, getFileName }) {
     return Number.isFinite(n) && n >= 1 ? n : 100;
   };
 
-  const objectTool = new ObjectTool({ viewer, edits: null, onState: () => syncUi() });
+  const objectTool = new ObjectTool({
+    viewer,
+    edits: null,
+    getSnap: () => snapIndex,
+    getScale: () => getScale(),
+    askOffset: (title, hint) => askOffset(title, hint),
+    onState: () => syncUi(),
+  });
 
   const tools = new ToolController({
     viewer,
@@ -68,15 +80,41 @@ export function setupTools({ viewer, getModel, getFileName }) {
     getScale,
     getSnap: () => snapIndex,
     askText: (at, initial) => askText(at, initial),
+    askOffset: (title, hint) => askOffset(title, hint),
     getTextRect: (id) => textRects.get(id) ?? null,
     onState: () => syncUi(),
   });
 
   viewer.overlay = (frame) => {
     if (!frame.forExport) textRects.clear();
-    drawAnnotations(frame, { items: store.items, draft: tools.draft, snap: tools.snap, selectedId: tools.selectedId, rects: textRects });
+    const snap = tools.mode === "obj" ? objectTool.snapHit : tools.snap;
+    drawAnnotations(frame, { items: store.items, draft: tools.draft, snap, selectedId: tools.selectedId, rects: textRects });
     if (tools.mode === "obj") objectTool.drawOverlay(frame);
   };
+
+  /** 横・縦の距離(実寸mm)を入力してもらう。やめたら null。 */
+  function askOffset(title, hint = "") {
+    return new Promise((resolve) => {
+      el.offTitle.textContent = title;
+      el.offHint.textContent = hint;
+      el.offDx.value = "0";
+      el.offDy.value = "0";
+      el.off.addEventListener(
+        "close",
+        () => {
+          if (el.off.returnValue !== "ok") return resolve(null);
+          const dx = Number(el.offDx.value);
+          const dy = Number(el.offDy.value);
+          resolve(Number.isFinite(dx) && Number.isFinite(dy) ? { dx, dy } : null);
+        },
+        { once: true }
+      );
+      el.off.returnValue = "cancel";
+      el.off.showModal();
+      el.offDx.focus();
+      el.offDx.select();
+    });
+  }
 
   function askText(at, initial = "") {
     return new Promise((resolve) => {
@@ -104,19 +142,38 @@ export function setupTools({ viewer, getModel, getFileName }) {
     if (sel) el.hint.textContent = "選択中: ドラッグで移動";
     const obj = tools.mode === "obj";
     const objSel = obj && objectTool.hasSelection;
-    el.add.hidden = !obj;
+    const busy = obj && (objectTool.baseMove || objectTool.stretch); // 基点移動・伸縮の途中
+    el.add.hidden = !obj || Boolean(busy);
     el.add.setAttribute("aria-pressed", String(objectTool.additive));
-    for (const b of [el.rl, el.rr, el.big, el.small]) b.hidden = !objSel;
-    if (objSel) {
+    for (const b of [el.rl, el.rr, el.big, el.small, el.base, el.stretch]) b.hidden = !objSel || Boolean(busy);
+    if (objSel && !busy) {
       el.copy.hidden = false;
       el.del.hidden = false;
       el.hint.textContent = `${objectTool.selection.length}個を選択中`;
     }
+    if (busy) {
+      el.copy.hidden = true;
+      el.del.hidden = true;
+      el.cancel.hidden = false;
+      const bm = objectTool.baseMove;
+      const st = objectTool.stretch;
+      el.hint.textContent = bm
+        ? bm.stage === "base" ? "動かす側の点(端点・中点)をタップ" : "移動先の点をタップ(2本指で動かして探せます)"
+        : st.stage === "window" ? "動かす側を、窓で囲む(ドラッグ)" : "ドラッグ、または「数値」で動かし、「完了」";
+      el.num.hidden = !(st && st.stage === "offset");
+      el.done.hidden = !(st && st.stage === "offset");
+      el.done.disabled = !(st && st.stage === "offset" && (st.dx !== 0 || st.dy !== 0));
+    } else {
+      el.num.hidden = true;
+    }
   }
 
   for (const b of el.bar.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
-  el.done.addEventListener("click", () => tools.finish());
-  el.cancel.addEventListener("click", () => tools.cancel());
+  el.done.addEventListener("click", () => (tools.mode === "obj" ? objectTool.finish() : tools.finish()));
+  el.cancel.addEventListener("click", () => (tools.mode === "obj" ? objectTool.cancelModes() : tools.cancel()));
+  el.base.addEventListener("click", () => objectTool.beginBaseMove());
+  el.stretch.addEventListener("click", () => objectTool.beginStretch());
+  el.num.addEventListener("click", () => objectTool.askStretchOffset());
   el.undo.addEventListener("click", () => tools.undo());
   el.copy.addEventListener("click", () => (tools.mode === "obj" ? objectTool.copy() : tools.copySelected()));
   el.del.addEventListener("click", () => (tools.mode === "obj" ? objectTool.delete() : tools.deleteSelected()));
@@ -235,7 +292,10 @@ export function setupTools({ viewer, getModel, getFileName }) {
       edits = new EditStore(model.entities, (e) => {
         viewer.entities = e.entities;
         clearTimeout(snapTimer);
-        snapTimer = setTimeout(() => (snapIndex = new SnapIndex(e.entities.filter(Boolean))), 200); // 編集後の端点に吸着する
+        snapTimer = setTimeout(() => {
+          snapIndex = new SnapIndex(e.entities); // 編集後の端点・中点に吸着する(番号を保つため、nullも含めて渡す)
+          refreshMarks();
+        }, 200);
         save();
       });
       objectTool.edits = edits;
