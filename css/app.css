@@ -248,3 +248,4 @@ body {
   font-size: 14px;
 }
 .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.dirty { background: #fff3cd; border-color: #e0a800; color: #5c4a00; font-weight: 700; }

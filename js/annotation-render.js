@@ -1,6 +1,6 @@
 // 注釈を、図面の上に描く。図面の座標(用紙mm)を画面の座標に変換して、線の太さや文字の大きさは画面の大きさで決める。
 import { COLORS, centroid } from "./annotations.js";
-import { polylineLength, polygonArea, realLength, realArea, formatLength, formatArea } from "./geometry.js";
+import { polylineLength, polygonArea, realLength, realArea, formatLength, formatArea, distance } from "./geometry.js";
 
 const SNAP_NAMES = { end: "端点", mid: "中点", center: "中心", quad: "四半点", mark: "基準点", point: "点" };
 const FONT = '"BIZ UDPGothic", "Noto Sans JP", "Yu Gothic", sans-serif';
@@ -148,6 +148,34 @@ export function drawAnnotations(frame, { items, draft = null, snap = null, selec
       const mid = all[Math.floor(all.length / 2) - (all.length % 2 === 0 ? 1 : 0)] ?? all[0];
       const total = polylineLength(cursor ? [...item.points, cursor] : item.points);
       label(formatLength(realLength(total, item.scale ?? 1)), { x: mid.x, y: mid.y - px(16) }, color);
+    } else if (item.kind === "line" || item.kind === "rect" || item.kind === "circle") {
+      // 作図中の予告(破線)。確定すると、図面の図形になる
+      const w0 = item.points[0];
+      const sc = item.scale ?? 1;
+      ctx.lineWidth = px(1.5);
+      if (cursor && item.kind === "line") {
+        path(all);
+        ctx.stroke();
+        label(formatLength(realLength(distance(w0, cursor), sc)), { x: (all[0].x + all[1].x) / 2, y: (all[0].y + all[1].y) / 2 - px(14) }, color);
+      } else if (cursor && item.kind === "rect") {
+        const a = all[0];
+        const b = all[1];
+        ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+        const w = formatLength(realLength(Math.abs(cursor.x - w0.x), sc));
+        const h = formatLength(realLength(Math.abs(cursor.y - w0.y), sc));
+        label(`${w} × ${h}`, { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - px(14) }, color);
+      } else if (cursor && item.kind === "circle") {
+        const c = all[0];
+        const r = Math.hypot(all[1].x - c.x, all[1].y - c.y);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        path([c, all[1]]);
+        ctx.stroke();
+        label(`R ${formatLength(realLength(distance(w0, cursor), sc))}`, { x: c.x, y: c.y - r - px(14) }, color);
+      } else {
+        dot(all[0], color);
+      }
     } else if (item.kind === "dim") {
       const a = all[0];
       const b = all[1];

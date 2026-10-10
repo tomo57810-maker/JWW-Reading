@@ -9,6 +9,10 @@ export const COLORS = {
   pen: "#e53935",
   text: "#e53935",
   mark: "#2e7d32",
+  // 図面に描き足す図形(線・矩形・円)の作図中の見た目(確定すると、図面の図形になる)
+  line: "#1565c0",
+  rect: "#1565c0",
+  circle: "#1565c0",
 };
 
 let counter = 0;
@@ -19,12 +23,31 @@ export class AnnotationStore {
     this.items = [];
     this.settings = {}; // 縮尺など、図面ごとの設定
     this.onChange = onChange;
+    this.undoStack = []; // 変更の直前の状態(JSON文字列)。「戻す」で、1つずつ戻る
+    this.onCheckpoint = () => {}; // 状態を積んだとき(図形の編集との、共通の「戻す」の順序づけに使う)
+  }
+
+  /** 変更する直前に呼ぶ。いまの状態を、「戻す」ために積む。 */
+  checkpoint() {
+    this.undoStack.push(JSON.stringify(this.items));
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.onCheckpoint();
+  }
+
+  /** 直前の状態に戻す。戻せたら true。 */
+  restoreLast() {
+    const prev = this.undoStack.pop();
+    if (prev === undefined) return false;
+    this.items = JSON.parse(prev);
+    this.onChange(this.items);
+    return true;
   }
 
   /** 保存データ(JSON用)から読み込む。形式が違う項目は読み飛ばす。 */
   load(data) {
     const items = Array.isArray(data?.items) ? data.items : [];
     this.items = items.filter(isValidItem);
+    this.undoStack = [];
     this.settings = data?.settings && typeof data.settings === "object" ? { ...data.settings } : {};
     this.onChange(this.items);
   }
@@ -36,6 +59,7 @@ export class AnnotationStore {
   add(item) {
     const full = { id: newId(), createdAt: new Date().toISOString(), ...item };
     if (!isValidItem(full)) throw new Error("注釈の形式が正しくありません");
+    this.checkpoint();
     this.items.push(full);
     this.onChange(this.items);
     return full;
@@ -47,19 +71,20 @@ export class AnnotationStore {
   }
 
   remove(id) {
-    const before = this.items.length;
+    if (!this.items.some((i) => i.id === id)) return;
+    this.checkpoint();
     this.items = this.items.filter((i) => i.id !== id);
-    if (this.items.length !== before) this.onChange(this.items);
+    this.onChange(this.items);
   }
 
+  /** 直前の変更を取り消す(追加・削除・移動・文字の修正のどれでも戻る)。 */
   undo() {
-    const last = this.items.pop();
-    if (last) this.onChange(this.items);
-    return last ?? null;
+    return this.restoreLast();
   }
 
   clear() {
     if (this.items.length === 0) return;
+    this.checkpoint();
     this.items = [];
     this.onChange(this.items);
   }
@@ -94,11 +119,17 @@ export function storageKey(fp) {
   return fp.sha256 ? `sha256:${fp.sha256}` : `name:${fp.name}:${fp.size}`;
 }
 
-/** 注釈を端末のIndexedDBに保存する。使えない環境(プライベートモード等)では、何もせず false を返す。 */
+/**
+ * 端末のIndexedDBへの保存(注釈・作業中の下書き・最後に開いた図面・図面ファイルの控え)。
+ * 使えない環境(プライベートモード等)では、何もせず null / false を返す。
+ *   annotations: 保存した状態と下書き     meta: 最後に開いた図面・表示位置など
+ *   files: 図面ファイルの情報(小さい)    blobs: 図面ファイルの中身
+ */
+export const STORES = ["annotations", "meta", "files", "blobs"];
+
 export class LocalAnnotationStorage {
-  constructor(dbName = "jww-reading", storeName = "annotations") {
+  constructor(dbName = "jww-reading") {
     this.dbName = dbName;
-    this.storeName = storeName;
     this.dbPromise = null;
   }
 
@@ -106,8 +137,10 @@ export class LocalAnnotationStorage {
     if (!this.dbPromise) {
       this.dbPromise = new Promise((resolve, reject) => {
         if (typeof indexedDB === "undefined") return reject(new Error("IndexedDBが使えません"));
-        const req = indexedDB.open(this.dbName, 1);
-        req.onupgradeneeded = () => req.result.createObjectStore(this.storeName);
+        const req = indexedDB.open(this.dbName, 2);
+        req.onupgradeneeded = () => {
+          for (const name of STORES) if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name);
+        };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
@@ -115,31 +148,61 @@ export class LocalAnnotationStorage {
     return this.dbPromise;
   }
 
-  async get(key) {
+  async #run(store, mode, fn) {
+    const db = await this.#db();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode);
+      const req = fn(tx.objectStore(store));
+      tx.oncomplete = () => resolve(req?.result ?? null);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  async get(key, store = "annotations") {
     try {
-      const db = await this.#db();
-      return await new Promise((resolve, reject) => {
-        const req = db.transaction(this.storeName).objectStore(this.storeName).get(key);
-        req.onsuccess = () => resolve(req.result ?? null);
-        req.onerror = () => reject(req.error);
-      });
+      return (await this.#run(store, "readonly", (s) => s.get(key))) ?? null;
     } catch {
       return null;
     }
   }
 
-  async set(key, value) {
+  async set(key, value, store = "annotations") {
     try {
-      const db = await this.#db();
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction(this.storeName, "readwrite");
-        tx.objectStore(this.storeName).put(value, key);
-        tx.oncomplete = resolve;
-        tx.onerror = () => reject(tx.error);
-      });
+      await this.#run(store, "readwrite", (s) => s.put(value, key));
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async delete(key, store = "annotations") {
+    try {
+      await this.#run(store, "readwrite", (s) => s.delete(key));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 保存してあるすべての値(キーと値の組)。 */
+  async entries(store) {
+    try {
+      const db = await this.#db();
+      return await new Promise((resolve, reject) => {
+        const out = [];
+        const req = db.transaction(store).objectStore(store).openCursor();
+        req.onsuccess = () => {
+          const c = req.result;
+          if (c) {
+            out.push([c.key, c.value]);
+            c.continue();
+          } else resolve(out);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      return [];
     }
   }
 }
@@ -168,7 +231,7 @@ function distToSegment(p, a, b) {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-/** 点pに最も近い注釈(許容距離tol・用紙mm以内)を返す。「消す」で使う。 */
+/** 点pに最も近い注釈(許容距離tol・用紙mm以内)を返す。「消す」「選択」で使う。 */
 export function hitTest(items, p, tol) {
   let best = null;
   let bestD = tol;

@@ -52,9 +52,13 @@ test("注釈: 追加・取り消し・全消去・不正な項目の拒否", () 
   const d = s.add({ kind: "dim", points: [{ x: 0, y: 0 }, { x: 10, y: 0 }], scale: 100 });
   s.add({ kind: "text", at: { x: 1, y: 1 }, text: "バルブ追加" });
   assert.equal(s.items.length, 2);
-  assert.equal(s.undo().kind, "text");
+  assert.equal(s.undo(), true); // 直前(コメントの追加)が取り消される
+  assert.equal(s.items.length, 1);
   s.remove(d.id);
   assert.equal(s.items.length, 0);
+  assert.equal(s.undo(), true); // 削除も取り消せる(寸法が戻る)
+  assert.equal(s.items.length, 1);
+  assert.equal(s.items[0].id, d.id);
   assert.throws(() => s.add({ kind: "dim", points: [{ x: 0, y: 0 }] }));
   assert.throws(() => s.add({ kind: "unknown" }));
   assert.ok(changes >= 3);
@@ -105,4 +109,18 @@ test("PDF: JPEG以外は拒否し、1ページのPDFの骨組みを作る", () =
   // xrefの位置が、実際の "xref" の位置と一致する
   const startxref = Number(/startxref\n(\d+)/.exec(text)[1]);
   assert.equal(text.slice(startxref, startxref + 4), "xref");
+});
+
+test("注釈の「戻す」: 移動(touch)のように、checkpointを積んだ変更も戻る", () => {
+  const s = new AnnotationStore();
+  const a = s.add({ kind: "mark", at: { x: 1, y: 1 } });
+  s.checkpoint(); // 移動の直前
+  a.at = { x: 5, y: 5 };
+  s.touch();
+  assert.deepEqual(s.items[0].at, { x: 5, y: 5 });
+  s.undo();
+  assert.deepEqual(s.items[0].at, { x: 1, y: 1 });
+  s.undo(); // 追加の取り消し
+  assert.equal(s.items.length, 0);
+  assert.equal(s.undo(), false);
 });

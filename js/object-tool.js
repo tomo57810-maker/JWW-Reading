@@ -437,6 +437,13 @@ export class ObjectTool {
     this.select(op.newIds);
   }
 
+  /** 新しい図形(線・矩形・円など)を、図面に描き足す(記録として残る)。 */
+  addEntities(entities) {
+    this.edits.add({ type: "add", entities });
+    this.viewer.setEntities(this.edits.entities);
+    this.onState();
+  }
+
   delete() {
     if (!this.hasSelection) return;
     this.edits.add({ type: "delete", ids: [...this.selection] });

@@ -106,3 +106,31 @@ test("伸縮: 窓の中の端点だけが動き、長さが変わる(W1200 → W
   assert.deepEqual(s2.entities, out);
   assert.equal(sink[0].x2, 1200); // 原本は不変
 });
+
+test("描き足し: 図形を末尾に足し、取り消し・保存・復元でも同じ番号になる", () => {
+  const base = [{ type: "LINE", x1: 0, y1: 0, x2: 1, y2: 1 }];
+  const s = new EditStore(base);
+  const rect = [
+    { type: "LINE", layer: "L", x1: 0, y1: 0, x2: 2, y2: 0 },
+    { type: "LINE", layer: "L", x1: 2, y1: 0, x2: 2, y2: 1 },
+  ];
+  const op = s.add({ type: "add", entities: rect });
+  assert.deepEqual(op.newIds, [1, 2]);
+  assert.equal(s.entities.length, 3);
+  s.add({ type: "add", entities: [{ type: "CIRCLE", layer: "L", center_x: 5, center_y: 5, radius: 1 }] });
+  assert.equal(s.entities[3].type, "CIRCLE");
+  // 描き足した図形も、あとから移動できる
+  s.add({ type: "xform", ids: [3], xf: { cx: 5, cy: 5, dx: 1, dy: 0, theta: 0, s: 1 } });
+  assert.equal(s.entities[3].center_x, 6);
+  // 保存・復元
+  const s2 = new EditStore(base);
+  assert.deepEqual(s2.load(JSON.parse(JSON.stringify(s.toJSON()))), { ok: true, count: 3 });
+  assert.deepEqual(s2.entities, s.entities);
+  // 取り消し(末尾から)
+  s.undo();
+  s.undo();
+  assert.equal(s.entities.length, 3);
+  s.undo();
+  assert.equal(s.entities.length, 1);
+  assert.equal(base.length, 1); // 原本は不変
+});

@@ -25,6 +25,21 @@ export class LayerPanel {
     this.render();
   }
 
+  /** 指定したレイヤを表示にする(図形を描き足したレイヤが、隠れていたときなど)。 */
+  show(key) {
+    if (!this.hidden.has(key)) return;
+    this.hidden.delete(key);
+    this.render();
+    this.onChange(new Set(this.hidden));
+  }
+
+  /** 隠すレイヤを、まとめて設定する(前回の表示状態の復元)。 */
+  setHidden(keys) {
+    this.hidden = new Set(keys);
+    this.render();
+    this.onChange(new Set(this.hidden));
+  }
+
   /** 表示する(true)/しない(false)を、全レイヤに設定する。 */
   setAll(visible) {
     if (!this.model) return;

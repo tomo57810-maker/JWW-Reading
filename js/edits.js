@@ -217,6 +217,7 @@ export function pickInRect(entities, rect, isVisible = () => true) {
  * 編集の記録。原本の図形の並び(base)に、操作を順に当てはめた結果(entities)を作る。
  *   { type: "xform", ids: [...], xf }  図形を相似変換する
  *   { type: "stretch", ids: [...], win: {x0,y0,x1,y1}, dx, dy }  窓の中の点だけを動かす(伸縮)
+ *   { type: "add", entities: [...], newIds: [...] }  新しい図形(線・矩形・円など)を、末尾に描き足す
  *   { type: "delete", ids: [...] }     図形を消す
  *   { type: "copy", ids: [...], xf, newIds: [...] }  変換した複製を、末尾に追加する
  */
@@ -226,6 +227,7 @@ export class EditStore {
     this.ops = [];
     this.entities = base.slice();
     this.onChange = onChange;
+    this.onAdd = () => {}; // 操作を1つ記録するたびに呼ぶ(「戻す」の順序づけに使う)
   }
 
   get baseCount() {
@@ -239,6 +241,11 @@ export class EditStore {
         break;
       case "stretch":
         for (const id of op.ids) if (this.entities[id]) this.entities[id] = stretchEntity(this.entities[id], op.win, op.dx, op.dy);
+        break;
+      case "add":
+        op.newIds.forEach((nid, k) => {
+          this.entities[nid] = op.entities[k];
+        });
         break;
       case "delete":
         for (const id of op.ids) this.entities[id] = null;
@@ -256,8 +263,10 @@ export class EditStore {
 
   add(op) {
     if (op.type === "copy") op = { ...op, newIds: op.ids.map((_, k) => this.entities.length + k) };
+    if (op.type === "add") op = { ...op, ids: [], newIds: op.entities.map((_, k) => this.entities.length + k) };
     this.ops.push(op);
     this.#apply(op);
+    this.onAdd(op);
     this.onChange(this);
     return op;
   }
@@ -299,7 +308,8 @@ export class EditStore {
       return { ok: false, reason: "図形の数が一致しません" };
     }
     for (const op of data.ops) {
-      if (!["xform", "delete", "copy", "stretch"].includes(op?.type) || !Array.isArray(op.ids)) continue;
+      if (!["xform", "delete", "copy", "stretch", "add"].includes(op?.type) || !Array.isArray(op.ids)) continue;
+      if (op.type === "add" && !(Array.isArray(op.entities) && Array.isArray(op.newIds) && op.newIds.length === op.entities.length && op.newIds.every((n) => Number.isInteger(n) && n >= this.entities.length))) continue;
       if ((op.type === "xform" || op.type === "copy") && !(op.xf && Number.isFinite(op.xf.s) && Number.isFinite(op.xf.theta))) continue;
       if (op.type === "stretch" && !(op.win && [op.win.x0, op.win.y0, op.win.x1, op.win.y1, op.dx, op.dy].every(Number.isFinite))) continue;
       this.ops.push(op);

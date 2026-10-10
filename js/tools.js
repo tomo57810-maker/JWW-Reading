@@ -6,7 +6,8 @@ const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
-export const MODES = ["move", "obj", "select", "dim", "area", "route", "mark", "pen", "text", "erase"];
+export const MODES = ["move", "obj", "select", "dim", "area", "route", "mark", "line", "rect", "circle", "pen", "text", "erase"];
+const SHAPE_MODES = ["line", "rect", "circle"]; // 図面に図形(線・矩形・円)を描き足すモード
 
 export class ToolController {
   /**
@@ -17,10 +18,11 @@ export class ToolController {
    * @param {() => import("./geometry.js").SnapIndex | null} deps.getSnap
    * @param {(at: {x:number,y:number}, initial?: string) => Promise<string | null>} deps.askText コメントの文字を入力してもらう
    * @param {(title: string, hint?: string) => Promise<{dx:number, dy:number} | null>} [deps.askOffset] 横・縦の距離(実寸mm)を入力してもらう
+   * @param {() => {layer?: string, color?: number}} [deps.getDrawStyle] 描き足す図形(線・矩形・円)のレイヤと色
    * @param {(id: string) => {x:number,y:number,w:number,h:number} | null} [deps.getTextRect] 画面に描いたコメントの四角(画面px)。選ぶときの当たり判定に使う
    * @param {() => void} [deps.onState] モードや作図中の状態が変わったとき
    */
-  constructor({ viewer, store, getScale, getSnap, askText, askOffset = async () => null, getTextRect = () => null, objectTool = null, onState = () => {} }) {
+  constructor({ viewer, store, getScale, getSnap, askText, askOffset = async () => null, getTextRect = () => null, objectTool = null, getDrawStyle = () => ({}), onState = () => {} }) {
     this.viewer = viewer;
     this.store = store;
     this.getScale = getScale;
@@ -29,6 +31,7 @@ export class ToolController {
     this.askOffset = askOffset;
     this.getTextRect = getTextRect;
     this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「図形」モード)
+    this.getDrawStyle = getDrawStyle; // 描き足す図形の、レイヤ・色など
     this.onState = onState;
     this.mode = "move";
     this.draft = null; // { item: {kind, points, scale}, cursor }
@@ -93,25 +96,88 @@ export class ToolController {
     this.viewer.redraw();
   }
 
-  /** 作図中なら、最後の点を取り消す。作図中でなければ、最後の注釈を取り消す。 */
-  undo() {
-    if (this.mode === "obj") {
-      this.objectTool?.undo();
-      this.onState();
-      return;
+  /** 描き足す図形のもとになる属性(レイヤ・色・線種)。 */
+  #shapeBase() {
+    const st = this.getDrawStyle() ?? {};
+    return { layer: st.layer ?? "0", color: st.color ?? 7, line_type: "CONTINUOUS", line_weight: -3 };
+  }
+
+  /** 2点から、線・矩形(4本の線)・円を作って、図面に描き足す。 */
+  #commitShape(a, b) {
+    const base = this.#shapeBase();
+    let entities;
+    if (this.mode === "line") {
+      entities = [{ type: "LINE", ...base, x1: a.x, y1: a.y, x2: b.x, y2: b.y }];
+    } else if (this.mode === "rect") {
+      const [x0, x1] = [a.x, b.x];
+      const [y0, y1] = [a.y, b.y];
+      if (x0 === x1 || y0 === y1) return;
+      entities = [
+        { type: "LINE", ...base, x1: x0, y1: y0, x2: x1, y2: y0 },
+        { type: "LINE", ...base, x1: x1, y1: y0, x2: x1, y2: y1 },
+        { type: "LINE", ...base, x1: x1, y1: y1, x2: x0, y2: y1 },
+        { type: "LINE", ...base, x1: x0, y1: y1, x2: x0, y2: y0 },
+      ];
+    } else {
+      const radius = distance(a, b);
+      if (radius <= 0) return;
+      entities = [{ type: "CIRCLE", ...base, center_x: a.x, center_y: a.y, radius }];
     }
+    this.objectTool?.addEntities(entities);
+    this.draft = null;
+  }
+
+  /** 1点目を置いたあと、数値(実寸mm)で2点目を決める。矩形: 横・縦 / 円: 半径 / 線: 横・縦。 */
+  async askShapeNumbers() {
+    const d = this.draft;
+    if (!d || !SHAPE_MODES.includes(d.item.kind) || d.item.points.length !== 1) return;
+    const a = d.item.points[0];
+    const scale = this.getScale();
+    if (d.item.kind === "circle") {
+      const r = await this.askOffset("円の半径(実寸mm)", "中心(いまタップした点)から、何mmの半径で描きますか。", { single: "半径" });
+      if (!r || !(r.dx > 0)) return;
+      this.#commitShape(a, { x: a.x + r.dx / scale, y: a.y });
+    } else {
+      const title = d.item.kind === "rect" ? "矩形の大きさ(実寸mm)" : "線の長さ(実寸mm)";
+      const r = await this.askOffset(title, "1点目から、横(→が+)・縦(↑が+)に何mmですか。例: 流しなら 横1200・縦600。");
+      if (!r) return;
+      this.#commitShape(a, { x: a.x + r.dx / scale, y: a.y + r.dy / scale });
+    }
+    this.snap = null;
+    this.onState();
+    this.viewer.redraw();
+  }
+
+  /** 作図中の点を1つ取り消す。取り消せたら true。 */
+  undoDraft() {
     if (this.draft && this.draft.item.kind !== "pen" && this.draft.item.points.length > 0) {
       this.draft.item.points.pop();
       if (this.draft.item.points.length === 0) this.draft = null;
       this.onState();
       this.viewer.redraw();
+      return true;
+    }
+    return false;
+  }
+
+  /** 作図中なら、最後の点を取り消す。作図中でなければ、直前の操作(図形モードでは図形の編集、それ以外は注釈)を取り消す。 */
+  undo() {
+    if (this.undoDraft()) return;
+    if (this.mode === "obj") {
+      this.objectTool?.undo();
+      this.onState();
       return;
     }
     this.store.undo();
   }
 
   get drafting() {
-    return Boolean(this.draft) && this.draft.item.kind !== "pen";
+    return Boolean(this.draft) && this.draft.item.kind !== "pen" && !SHAPE_MODES.includes(this.draft.item.kind);
+  }
+
+  /** 線・矩形・円の作図中か(1点目を置いたあと)。 */
+  get shapeDrafting() {
+    return Boolean(this.draft) && SHAPE_MODES.includes(this.draft.item.kind);
   }
 
   get draftInfo() {
@@ -187,6 +253,7 @@ export class ToolController {
     if (!sel || sel.kind !== "text") return;
     const text = await this.askText(sel.at, sel.text);
     if (text?.trim()) {
+      this.store.checkpoint();
       sel.text = text.trim();
       this.store.touch();
     }
@@ -215,6 +282,9 @@ export class ToolController {
       case "area":
       case "route":
       case "mark":
+      case "line":
+      case "rect":
+      case "circle":
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
         break;
@@ -231,6 +301,7 @@ export class ToolController {
         const dx = point.world.x - d.start.x;
         const dy = point.world.y - d.start.y;
         if (!d.moved && Math.hypot(dx, dy) * this.viewer.view.s < 4) break; // 指がわずかに動いただけでは動かさない
+        if (!d.moved) this.store.checkpoint(); // 「戻す」で、移動前に戻れるようにする
         d.moved = true;
         if (d.orig.at) d.item.at = { x: d.orig.at.x + dx, y: d.orig.at.y + dy };
         else d.item.points = d.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
@@ -246,6 +317,9 @@ export class ToolController {
       case "area":
       case "route":
       case "mark":
+      case "line":
+      case "rect":
+      case "circle":
         // 指を動かしている間も、吸着の位置と途中の長さを見せる(離した位置が採用される)
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
@@ -290,6 +364,20 @@ export class ToolController {
         this.onState();
         break;
       }
+      case "line":
+      case "rect":
+      case "circle": {
+        const p = this.#snapPoint(point);
+        if (!this.draft) this.draft = { item: { kind: this.mode, points: [], scale: this.getScale() }, cursor: null };
+        const pts = this.draft.item.points;
+        const last = pts.at(-1);
+        if (!last || distance(last, p) * this.viewer.view.s > 3) pts.push({ x: p.x, y: p.y });
+        this.snap = null;
+        this.draft.cursor = null;
+        if (pts.length === 2) this.#commitShape(pts[0], pts[1]);
+        this.onState();
+        break;
+      }
       case "mark": {
         if (moved > TAP_MOVE_PX * 2) break;
         const base = this.#snapPoint(point);
@@ -317,7 +405,7 @@ export class ToolController {
       }
       case "erase": {
         if (moved > TAP_MOVE_PX) break;
-        const hit = hitTest(this.store.items, point.world, SNAP_PX * 1.5 / this.viewer.view.s);
+        const hit = hitTest(this.store.items, point.world, (SNAP_PX * 1.6) / this.viewer.view.s); // 指で押す位置のずれを見込んで、広めに判定する
         if (hit) this.store.remove(hit.id);
         this.onState();
         break;

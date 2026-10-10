@@ -66,6 +66,7 @@ export function buildLayerGroups(dxfLayers, header, entities) {
         const layer = {
           group: gi, index: li, key, label: layerLabel(gi, li),
           name: (l.name ?? "").trim(), state: l.state, count: 0,
+          color: dxfLayers[gi * LAYERS_PER_GROUP + li]?.color ?? null,
         };
         if (key !== null) byKey.set(key, layer);
         return layer;
@@ -104,10 +105,15 @@ export function buildModel(dxf, header = null) {
       if (l.key !== null && (g.state === 0 || l.state === 0)) initiallyHidden.add(l.key);
     }
   }
+  // Jw_cadの「書込レイヤ」(図形を描き足すときの、レイヤと色)
+  const wgIdx = header?.write_layer_group;
+  const wlIdx = header?.layer_groups?.[wgIdx]?.write_layer;
+  const wl = Number.isInteger(wgIdx) && Number.isInteger(wlIdx) ? groups[wgIdx]?.layers?.[wlIdx] : null;
   return {
     entities,
     bounds: boundsOf(entities),
     groups,
+    writeLayer: wl && wl.key !== null ? { key: wl.key, color: wl.color ?? 7 } : null,
     initiallyHidden,
     writeGroup: Number.isInteger(header?.write_layer_group) ? header.write_layer_group : null,
     writeScale: header?.layer_groups?.[header?.write_layer_group]?.scale > 0 ? header.layer_groups[header.write_layer_group].scale : null,

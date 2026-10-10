@@ -15,6 +15,7 @@
     <label class="btn primary" for="file">開く</label>
     <input id="file" type="file" accept=".jww,.jwc,application/octet-stream" hidden>
     <span id="name" class="name">図面が開かれていません</span>
+    <button id="recent-btn" class="btn" type="button">最近</button>
     <button id="od-btn" class="btn" type="button">OneDrive</button>
     <button id="fit" class="btn" type="button" disabled>全体</button>
     <button id="layers-btn" class="btn" type="button" disabled>レイヤ</button>
@@ -39,6 +40,9 @@
       <button class="tool" type="button" data-tool="area" aria-pressed="false">面積</button>
       <button class="tool" type="button" data-tool="route" aria-pressed="false">ルート</button>
       <button class="tool" type="button" data-tool="mark" aria-pressed="false">基準点</button>
+      <button class="tool" type="button" data-tool="line" aria-pressed="false">線</button>
+      <button class="tool" type="button" data-tool="rect" aria-pressed="false">矩形</button>
+      <button class="tool" type="button" data-tool="circle" aria-pressed="false">円</button>
       <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
       <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
       <button class="tool" type="button" data-tool="erase" aria-pressed="false">消す</button>
@@ -46,6 +50,7 @@
     <div class="tool-row sub">
       <label class="scale">縮尺 1/<input id="scale" type="number" inputmode="numeric" min="1" step="1" value="100" aria-label="縮尺の分母"></label>
       <span id="tool-hint" class="hint"></span>
+      <button id="t-shape-num" class="btn small" type="button" hidden>数値</button>
       <button id="t-add" class="btn small" type="button" aria-pressed="false" hidden>追加選択</button>
       <button id="t-base" class="btn small" type="button" hidden>基点移動</button>
       <button id="t-stretch" class="btn small" type="button" hidden>伸縮</button>
@@ -60,6 +65,7 @@
       <button id="t-done" class="btn small" type="button" hidden>完了</button>
       <button id="t-cancel" class="btn small" type="button" hidden>取消</button>
       <button id="t-undo" class="btn small" type="button">戻す</button>
+      <button id="t-save" class="btn small" type="button">保存</button>
       <button id="t-export" class="btn small" type="button">書出</button>
     </div>
   </nav>
@@ -95,13 +101,34 @@
     <form method="dialog" class="od-body">
       <strong id="off-title"></strong>
       <p id="off-hint" class="note"></p>
-      <label class="opt">横(→が+) <input id="off-dx" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:8em"> mm</label>
-      <label class="opt">縦(↑が+) <input id="off-dy" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:8em"> mm</label>
+      <label class="opt"><span id="off-dx-label">横(→が+)</span> <input id="off-dx" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:8em"> mm</label>
+      <label class="opt" id="off-dy-row"><span>縦(↑が+)</span> <input id="off-dy" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:8em"> mm</label>
       <div class="row">
         <button class="btn" value="cancel" formnovalidate>やめる</button>
         <button class="btn primary" value="ok">決定</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="resume" class="od">
+    <form method="dialog" class="od-body">
+      <strong>前回の作業の続きがあります</strong>
+      <p class="note">この図面には、保存していない作業が残っています。どうしますか。</p>
+      <button class="btn primary" value="resume">続きから再開する</button>
+      <button class="btn" id="resume-saved" value="saved">保存した状態で開く</button>
+      <button class="btn" value="original">原本のまま開く(編集なし)</button>
+    </form>
+  </dialog>
+
+  <dialog id="recent" class="od">
+    <div class="od-head">
+      <strong>最近の図面(この端末に控えがあります)</strong>
+      <button class="btn small" type="button" data-recent-close aria-label="閉じる">×</button>
+    </div>
+    <div class="od-body">
+      <ul id="recent-list" class="od-list"></ul>
+      <p class="note">控えは、この端末の中だけに残ります(最大5件)。不要になったら、削除してください。</p>
+    </div>
   </dialog>
 
   <dialog id="txt" class="od">
@@ -131,7 +158,13 @@
       <label class="btn" for="ex-json-file">注釈ファイルを読み込む</label>
       <input id="ex-json-file" type="file" accept=".json,application/json" hidden>
       <button id="ex-clear" class="btn" type="button">注釈をすべて消す</button>
+      <button id="ex-clear-marks" class="btn" type="button">基準点だけをすべて消す</button>
       <button id="ex-reset-edits" class="btn" type="button">図形の編集をすべて元に戻す</button>
+      <hr>
+      <p class="note">保存の仕方</p>
+      <label class="opt"><input id="ex-autosave" type="checkbox"> 変更のたびに、自動で保存する(オフなら、「保存」を押したときだけ保存)</label>
+      <label class="opt"><input id="ex-draft" type="checkbox" checked> 保存していない作業を、一時的に残す(アプリが終了しても、続きから再開できる)</label>
+      <button id="ex-revert" class="btn" type="button">最後に保存した状態に戻す</button>
       <p id="ex-msg" class="note" role="status"></p>
     </div>
   </dialog>
