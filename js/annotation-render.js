@@ -1,0 +1,147 @@
+// 注釈を、図面の上に描く。図面の座標(用紙mm)を画面の座標に変換して、線の太さや文字の大きさは画面の大きさで決める。
+import { COLORS, centroid } from "./annotations.js";
+import { polylineLength, polygonArea, realLength, realArea, formatLength, formatArea } from "./geometry.js";
+
+const FONT = '"BIZ UDPGothic", "Noto Sans JP", "Yu Gothic", sans-serif';
+
+/** 寸法・ルートの文字(実寸の長さ)。 */
+export function lengthLabel(item) {
+  return formatLength(realLength(polylineLength(item.points), item.scale ?? 1));
+}
+
+export function areaLabel(item) {
+  return formatArea(realArea(polygonArea(item.points), item.scale ?? 1));
+}
+
+/**
+ * @param {{ ctx: CanvasRenderingContext2D, view: {s:number,tx:number,ty:number}, dpr: number, width: number, height: number, forExport?: boolean }} frame
+ * @param {{ items: any[], draft?: any, snap?: {x:number,y:number}|null }} content
+ */
+export function drawAnnotations(frame, { items, draft = null, snap = null }) {
+  const { ctx, view, dpr, width, height, forExport = false } = frame;
+  // 書き出し(PDF)では画面より細かい座標で描くので、線や文字を大きくする
+  const ui = forExport ? Math.max(1, Math.min(width, height) / 1000) : 1;
+  const px = (n) => n * ui;
+  const toScreen = (p) => ({ x: p.x * view.s + view.tx, y: -p.y * view.s + view.ty });
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  const label = (text, at, color) => {
+    ctx.font = `bold ${px(13)}px ${FONT}`;
+    const w = ctx.measureText(text).width;
+    const h = px(18);
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.fillRect(at.x - w / 2 - px(4), at.y - h / 2, w + px(8), h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = px(1);
+    ctx.strokeRect(at.x - w / 2 - px(4), at.y - h / 2, w + px(8), h);
+    ctx.fillStyle = color;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(text, at.x, at.y);
+  };
+  const path = (pts, close = false) => {
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    if (close) ctx.closePath();
+  };
+  const dot = (p, color, r = 3.5) => {
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, px(r + 1.5), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, px(r), 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const drawItem = (item, { isDraft = false, cursor = null } = {}) => {
+    const color = COLORS[item.kind];
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.setLineDash(isDraft ? [px(6), px(4)] : []);
+    if (item.kind === "text") {
+      const at = toScreen(item.at);
+      ctx.font = `bold ${px(15)}px ${FONT}`;
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = "left";
+      const lines = item.text.split("\n");
+      const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      const lh = px(19);
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.fillRect(at.x - px(3), at.y - px(15), w + px(8), lh * lines.length + px(2));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = px(1);
+      ctx.strokeRect(at.x - px(3), at.y - px(15), w + px(8), lh * lines.length + px(2));
+      ctx.fillStyle = color;
+      lines.forEach((l, i) => ctx.fillText(l, at.x, at.y + i * lh));
+      ctx.setLineDash([]);
+      return;
+    }
+    const pts = item.points.map(toScreen);
+    const all = cursor ? [...pts, toScreen(cursor)] : pts;
+    if (item.kind === "pen") {
+      ctx.lineWidth = px(2.5);
+      path(all);
+      ctx.stroke();
+    } else if (item.kind === "area") {
+      ctx.lineWidth = px(2);
+      if (all.length >= 3) {
+        path(all, true);
+        ctx.globalAlpha = 0.18;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      path(all, all.length >= 3);
+      ctx.stroke();
+      pts.forEach((p) => dot(p, color));
+      if (item.points.length >= 3) label(areaLabel(item), toScreen(centroid(item.points)), color);
+    } else if (item.kind === "route") {
+      ctx.lineWidth = px(3.5);
+      path(all);
+      ctx.stroke();
+      pts.forEach((p) => dot(p, color));
+      const mid = all[Math.floor(all.length / 2) - (all.length % 2 === 0 ? 1 : 0)] ?? all[0];
+      const total = polylineLength(cursor ? [...item.points, cursor] : item.points);
+      label(formatLength(realLength(total, item.scale ?? 1)), { x: mid.x, y: mid.y - px(16) }, color);
+    } else if (item.kind === "dim") {
+      const a = all[0];
+      const b = all[1];
+      if (b) {
+        ctx.lineWidth = px(2);
+        path([a, b]);
+        ctx.stroke();
+        // 両端に、寸法線の端の印(線に直角の短い線)
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const nx = (-(b.y - a.y) / len) * px(7);
+        const ny = ((b.x - a.x) / len) * px(7);
+        for (const p of [a, b]) {
+          path([{ x: p.x - nx, y: p.y - ny }, { x: p.x + nx, y: p.y + ny }]);
+          ctx.stroke();
+        }
+        const total = polylineLength(cursor ? [item.points[0], cursor] : item.points);
+        label(formatLength(realLength(total, item.scale ?? 1)), { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - px(14) }, color);
+      } else {
+        dot(a, color);
+      }
+    }
+    ctx.setLineDash([]);
+  };
+
+  for (const item of items) drawItem(item);
+  if (draft) drawItem(draft.item, { isDraft: true, cursor: draft.cursor });
+  if (draft?.item.points?.length && draft.item.kind !== "pen") draft.item.points.forEach((p) => dot(toScreen(p), COLORS[draft.item.kind]));
+
+  if (snap && !forExport) {
+    const s = toScreen(snap);
+    ctx.strokeStyle = "#00acc1";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.strokeRect(s.x - 6, s.y - 6, 12, 12);
+  }
+  ctx.restore();
+}

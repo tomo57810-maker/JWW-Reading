@@ -4,6 +4,7 @@ import { Viewer } from "./viewer.js";
 import { LayerPanel } from "./layer-panel.js";
 import { OneDriveDialog } from "./onedrive-dialog.js";
 import { CLIENT_ID } from "./config.js";
+import { setupTools } from "./app-tools.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -13,8 +14,9 @@ const els = {
   search: $("layer-search"), list: $("layer-list"), showEmpty: $("show-empty"),
 };
 
-const state = { model: null, dark: false };
+const state = { model: null, fileName: "", dark: false };
 const viewer = new Viewer(els.canvas);
+const toolkit = setupTools({ viewer, getModel: () => state.model, getFileName: () => state.fileName });
 const layerPanel = new LayerPanel({
   list: els.list,
   search: els.search,
@@ -45,9 +47,12 @@ async function openFile(file) {
     const model = buildModel(readDrawing(bytes), readHeader(bytes));
     const ms = Math.round(performance.now() - t0);
     state.model = model;
+    state.fileName = file.name;
     layerPanel.setModel(model);
     viewer.setModel(model, new Set(layerPanel.hidden));
     els.name.textContent = file.name;
+    await toolkit.onOpened(model, file, bytes);
+    viewer.fit(); // 測定バーが出て、図面の表示領域が変わったので合わせ直す
     els.empty.hidden = true;
     els.fit.disabled = false;
     els.layersBtn.disabled = false;
@@ -123,4 +128,4 @@ if ("serviceWorker" in navigator) {
 openSharedFile();
 
 // 検証用: ?debug を付けて開いたときだけ、画面から状態を確認できるようにする
-if (new URLSearchParams(location.search).has("debug")) window.__jww = { state, viewer };
+if (new URLSearchParams(location.search).has("debug")) window.__jww = { state, viewer, toolkit };

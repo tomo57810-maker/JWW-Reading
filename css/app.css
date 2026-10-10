@@ -213,3 +213,26 @@ body {
 .od-item:disabled { opacity: 0.45; cursor: default; }
 .od-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .od-icon { flex: none; }
+
+.tools { background: var(--surface); border-top: 1px solid var(--line); padding: 6px 8px; }
+.tool-row { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.tool-row::-webkit-scrollbar { display: none; }
+.tool-row.sub { margin-top: 6px; }
+.tool {
+  flex: 1 0 auto;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tool[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.scale { display: flex; align-items: center; gap: 4px; flex: none; font-size: 14px; color: var(--muted); }
+.scale input { width: 4.5em; min-height: 36px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+.hint { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row { display: flex; gap: 8px; justify-content: flex-end; }
+.od hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 4px 0; }

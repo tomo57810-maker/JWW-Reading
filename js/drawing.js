@@ -110,6 +110,7 @@ export function buildModel(dxf, header = null) {
     groups,
     initiallyHidden,
     writeGroup: Number.isInteger(header?.write_layer_group) ? header.write_layer_group : null,
+    writeScale: header?.layer_groups?.[header?.write_layer_group]?.scale > 0 ? header.layer_groups[header.write_layer_group].scale : null,
     layerCount: groups.reduce((n, g) => n + g.layers.filter((l) => l.count > 0).length, 0),
     typeCounts,
     unsupported: dxf.unsupported_entities ?? [],

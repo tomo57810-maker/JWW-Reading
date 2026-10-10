@@ -20,6 +20,9 @@ export class Viewer {
     this.texts = [];
     this.pointers = new Map();
     this.raf = 0;
+    this.tool = null; // 注釈・測定のツール(down/move/up/cancel/hover を持つ)。nullなら、指で動かすだけ
+    this.toolPointerId = null;
+    this.overlay = null; // 図面の上に、注釈などを描く関数 ({ ctx, view, dpr, width, height }) => void
     this.#bindEvents();
     new ResizeObserver(() => this.#resize()).observe(canvas);
     this.#resize();
@@ -72,6 +75,11 @@ export class Viewer {
     this.#schedule();
   }
 
+  /** 注釈などを変えたあとに、描き直す。 */
+  redraw() {
+    this.#schedule();
+  }
+
   /** 画面の点を図面の座標(用紙mm)に変換する。 */
   toWorld(sx, sy) {
     const v = this.view;
@@ -102,9 +110,15 @@ export class Viewer {
 
   /** 表示中のレイヤの図形を、色・太さ・線種ごとにまとめたPath2Dにする(拡大縮小のたびに作り直さない)。 */
   #rebuild() {
-    this.batches = [];
-    this.texts = [];
-    if (!this.model) return;
+    const built = this.#build(this.dark);
+    this.batches = built.batches;
+    this.texts = built.texts;
+  }
+
+  #build(dark) {
+    const batches = [];
+    const texts = [];
+    if (!this.model) return { batches, texts };
     const strokes = new Map();
     const fills = new Map();
     const strokeOf = (e) => {
@@ -112,7 +126,7 @@ export class Viewer {
       const key = `${e.color}|${lw}|${e.line_type}`;
       let b = strokes.get(key);
       if (!b) {
-        b = { kind: "stroke", css: aciToCss(e.color, this.dark), lw, dash: dashFor(e.line_type), path: new Path2D() };
+        b = { kind: "stroke", css: aciToCss(e.color, dark), lw, dash: dashFor(e.line_type), path: new Path2D() };
         strokes.set(key, b);
       }
       return b.path;
@@ -120,7 +134,7 @@ export class Viewer {
     const fillOf = (e) => {
       let b = fills.get(e.color);
       if (!b) {
-        b = { kind: "fill", css: aciToCss(e.color, this.dark), path: new Path2D() };
+        b = { kind: "fill", css: aciToCss(e.color, dark), path: new Path2D() };
         fills.set(e.color, b);
       }
       return b.path;
@@ -160,9 +174,9 @@ export class Viewer {
         }
         case "TEXT":
           if (e.content) {
-            this.texts.push({
+            texts.push({
               x: e.x, y: e.y, ex: e.end_x, ey: e.end_y, h: e.height,
-              rot: e.rotation ?? 0, content: e.content, css: aciToCss(e.color, this.dark),
+              rot: e.rotation ?? 0, content: e.content, css: aciToCss(e.color, dark),
             });
           }
           break;
@@ -170,22 +184,47 @@ export class Viewer {
           break;
       }
     }
-    this.batches = [...fills.values(), ...strokes.values()];
+    return { batches: [...fills.values(), ...strokes.values()], texts };
   }
 
   #draw() {
-    const { ctx, canvas, view } = this;
     const dpr = window.devicePixelRatio || 1;
+    const { width, height } = this.#cssSize();
+    this.#renderScene(this.ctx, { view: this.view, dpr, width, height, dark: this.dark, scene: this });
+    if (this.model && this.overlay) this.overlay({ ctx: this.ctx, view: this.view, dpr, width, height });
+  }
+
+  /**
+   * 図面を、指定した大きさのcanvasに描く(PDF出力用)。画面の表示とは別に、白い紙・通常の色で描く。
+   * @param {HTMLCanvasElement} canvas 描き込み先(widthとheightは呼び出し側で設定済み)
+   */
+  renderToCanvas(canvas, { bounds = this.model?.bounds, withOverlay = true, marginPx = null } = {}) {
+    if (!this.model || !bounds) throw new Error("図面が開かれていません");
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    const bw = Math.max(bounds.x1 - bounds.x0, 1e-6);
+    const bh = Math.max(bounds.y1 - bounds.y0, 1e-6);
+    const m = marginPx ?? Math.min(w, h) * 0.02;
+    const s = Math.min((w - m * 2) / bw, (h - m * 2) / bh);
+    const view = { s, tx: (w - bw * s) / 2 - bounds.x0 * s, ty: (h + bh * s) / 2 + bounds.y0 * s };
+    const scene = this.dark ? { ...this.#build(false) } : this;
+    this.#renderScene(ctx, { view, dpr: 1, width: w, height: h, dark: false, scene });
+    if (withOverlay && this.overlay) this.overlay({ ctx, view, dpr: 1, width: w, height: h, forExport: true });
+    return view;
+  }
+
+  #renderScene(ctx, { view, dpr, width, height, dark, scene }) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = this.dark ? "#111111" : "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = dark ? "#111111" : "#ffffff";
+    ctx.fillRect(0, 0, Math.round(width * dpr), Math.round(height * dpr));
     if (!this.model) return;
 
     ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.tx, dpr * view.ty);
     ctx.lineCap = "butt";
     ctx.lineJoin = "round";
     const minLine = MIN_LINE_PX / view.s;
-    for (const b of this.batches) {
+    for (const b of scene.batches) {
       if (b.kind === "fill") {
         ctx.fillStyle = b.css;
         ctx.fill(b.path);
@@ -197,14 +236,12 @@ export class Viewer {
       }
     }
     ctx.setLineDash([]);
-    this.#drawTexts(dpr);
+    this.#drawTexts(ctx, scene.texts, { view, dpr, width, height });
   }
 
-  #drawTexts(dpr) {
-    const { ctx, view } = this;
-    const { width: cw, height: ch } = this.#cssSize();
+  #drawTexts(ctx, texts, { view, dpr, width: cw, height: ch }) {
     ctx.textBaseline = "alphabetic";
-    for (const t of this.texts) {
+    for (const t of texts) {
       const px = t.h * view.s;
       if (px < MIN_TEXT_PX) continue;
       const sx = t.x * view.s + view.tx;
@@ -221,6 +258,7 @@ export class Viewer {
       if (target > 0 && natural > 0) ctx.scale(Math.min(Math.max(target / natural, 0.3), 3), 1);
       ctx.fillText(t.content, 0, 0);
     }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   #bindEvents() {
@@ -230,15 +268,34 @@ export class Viewer {
       const r = c.getBoundingClientRect();
       return { x: ev.clientX - r.left, y: ev.clientY - r.top };
     };
+    const toolPoint = (p) => ({ sx: p.x, sy: p.y, world: this.toWorld(p.x, p.y) });
     c.addEventListener("pointerdown", (ev) => {
       c.setPointerCapture(ev.pointerId);
-      this.pointers.set(ev.pointerId, local(ev));
+      const p = local(ev);
+      this.pointers.set(ev.pointerId, p);
+      if (this.tool && this.pointers.size === 1) {
+        this.toolPointerId = ev.pointerId;
+        this.tool.down(toolPoint(p));
+        this.#schedule();
+      } else if (this.pointers.size >= 2 && this.toolPointerId !== null) {
+        this.tool?.cancel();
+        this.toolPointerId = null;
+      }
     });
     c.addEventListener("pointermove", (ev) => {
       const prev = this.pointers.get(ev.pointerId);
-      if (!prev) return;
       const cur = local(ev);
-      if (this.pointers.size === 1) {
+      if (!prev) {
+        if (this.tool?.hover && ev.pointerType === "mouse") { this.tool.hover(toolPoint(cur)); this.#schedule(); }
+        return;
+      }
+      if (ev.pointerId === this.toolPointerId && this.pointers.size === 1) {
+        this.pointers.set(ev.pointerId, cur);
+        this.tool.move(toolPoint(cur));
+        this.#schedule();
+        return;
+      }
+      if (this.pointers.size === 1 && !this.tool) {
         this.view = { ...this.view, tx: this.view.tx + cur.x - prev.x, ty: this.view.ty + cur.y - prev.y };
       } else if (this.pointers.size === 2) {
         const other = [...this.pointers.entries()].find(([id]) => id !== ev.pointerId)[1];
@@ -252,9 +309,18 @@ export class Viewer {
       this.pointers.set(ev.pointerId, cur);
       this.#schedule();
     });
-    const up = (ev) => this.pointers.delete(ev.pointerId);
-    c.addEventListener("pointerup", up);
-    c.addEventListener("pointercancel", up);
+    const end = (ev, cancelled) => {
+      const p = local(ev);
+      if (ev.pointerId === this.toolPointerId) {
+        this.toolPointerId = null;
+        if (cancelled) this.tool?.cancel();
+        else this.tool?.up(toolPoint(p));
+        this.#schedule();
+      }
+      this.pointers.delete(ev.pointerId);
+    };
+    c.addEventListener("pointerup", (ev) => end(ev, false));
+    c.addEventListener("pointercancel", (ev) => end(ev, true));
     c.addEventListener(
       "wheel",
       (ev) => {
@@ -265,6 +331,7 @@ export class Viewer {
       { passive: false }
     );
     c.addEventListener("dblclick", (ev) => {
+      if (this.tool) return; // ツールを使っているときは、ダブルタップで拡大しない
       const p = local(ev);
       this.zoomAt(p.x, p.y, 2);
     });

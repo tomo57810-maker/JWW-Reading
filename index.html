@@ -30,6 +30,26 @@
     <div id="busy" class="busy" hidden>読み込み中…</div>
   </main>
 
+  <nav id="tools" class="tools" aria-label="測定・注釈" hidden>
+    <div class="tool-row" role="group" aria-label="ツール">
+      <button class="tool" type="button" data-tool="move" aria-pressed="true">移動</button>
+      <button class="tool" type="button" data-tool="dim" aria-pressed="false">寸法</button>
+      <button class="tool" type="button" data-tool="area" aria-pressed="false">面積</button>
+      <button class="tool" type="button" data-tool="route" aria-pressed="false">ルート</button>
+      <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
+      <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
+      <button class="tool" type="button" data-tool="erase" aria-pressed="false">消す</button>
+    </div>
+    <div class="tool-row sub">
+      <label class="scale">縮尺 1/<input id="scale" type="number" inputmode="numeric" min="1" step="1" value="100" aria-label="縮尺の分母"></label>
+      <span id="tool-hint" class="hint"></span>
+      <button id="t-done" class="btn small" type="button" hidden>完了</button>
+      <button id="t-cancel" class="btn small" type="button" hidden>取消</button>
+      <button id="t-undo" class="btn small" type="button">戻す</button>
+      <button id="t-export" class="btn small" type="button">書出</button>
+    </div>
+  </nav>
+
   <footer id="status" class="status" role="status"></footer>
 
   <aside id="panel" class="panel" hidden>
@@ -50,6 +70,37 @@
       <button class="btn small" type="button" data-od-close aria-label="閉じる">×</button>
     </div>
     <div class="od-body" data-od-body></div>
+  </dialog>
+
+  <dialog id="txt" class="od">
+    <form method="dialog" class="od-body">
+      <strong>コメント</strong>
+      <textarea id="txt-input" class="search" rows="3" maxlength="200" placeholder="例: ここにバルブ追加" style="padding:8px 12px"></textarea>
+      <div class="row">
+        <button class="btn" value="cancel" formnovalidate>やめる</button>
+        <button class="btn primary" value="ok">入れる</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ex" class="od">
+    <div class="od-head">
+      <strong>書き出し・注釈の管理</strong>
+      <button class="btn small" type="button" data-ex-close aria-label="閉じる">×</button>
+    </div>
+    <div class="od-body">
+      <p class="note">図面と注釈を、用紙の大きさのPDFにします(画像形式のPDF)。原本のJWWは変更されません。</p>
+      <button id="ex-pdf" class="btn primary" type="button">PDFにする(標準)</button>
+      <button id="ex-pdf-hi" class="btn" type="button">PDFにする(高画質・大きい)</button>
+      <label class="opt"><input id="ex-overlay" type="checkbox" checked> 注釈を入れる</label>
+      <hr>
+      <p class="note">注釈だけを、ファイル(JSON)として保存・読み込みできます。端末にも自動で保存されます。</p>
+      <button id="ex-json" class="btn" type="button">注釈をファイルに保存</button>
+      <label class="btn" for="ex-json-file">注釈ファイルを読み込む</label>
+      <input id="ex-json-file" type="file" accept=".json,application/json" hidden>
+      <button id="ex-clear" class="btn" type="button">注釈をすべて消す</button>
+      <p id="ex-msg" class="note" role="status"></p>
+    </div>
   </dialog>
 
   <script src="vendor/msal-browser.min.js"></script>
