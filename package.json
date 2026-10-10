@@ -1,0 +1,15 @@
+{
+  "name": "jww-reading",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JWW(Jw_cad)図面をブラウザで閲覧・書き込みするWebアプリ",
+  "type": "module",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "ezjww": "0.6.0"
+  }
+}

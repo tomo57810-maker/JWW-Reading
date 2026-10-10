@@ -1,0 +1,6 @@
+node_modules/
+# 図面(JWW/JWC)は業務データのため、誤ってコミットしない
+*.jww
+*.jwc
+*.JWW
+*.JWC
