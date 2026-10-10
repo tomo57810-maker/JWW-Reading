@@ -59,3 +59,15 @@ export function buildModel(dxf) {
     unsupported: dxf.unsupported_entities ?? [],
   };
 }
+
+/**
+ * JWWとして読めないデータの原因を、利用者向けの文章で返す(読める見込みならnull)。
+ * OneDriveの「共有」はファイル本体ではなくリンク(URL)を渡すため、その場合を見分ける。
+ */
+export function explainNotDrawing(bytes) {
+  const head = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, 8)).toLowerCase();
+  if (head.startsWith("http://") || head.startsWith("https://")) {
+    return "ファイルではなく、リンク(URL)が共有されました。OneDriveの「共有」はリンクを渡します。OneDriveで「保存」してから、「開く」で選ぶか、マイファイルから共有してください。";
+  }
+  return null;
+}

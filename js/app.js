@@ -1,5 +1,5 @@
 import { init, readDrawing } from "../vendor/ezjww.mjs";
-import { buildModel } from "./drawing.js";
+import { buildModel, explainNotDrawing } from "./drawing.js";
 import { Viewer } from "./viewer.js";
 
 const $ = (id) => document.getElementById(id);
@@ -27,6 +27,11 @@ async function openFile(file) {
   try {
     await wasmReady;
     const bytes = new Uint8Array(await file.arrayBuffer());
+    const reason = explainNotDrawing(bytes);
+    if (reason) {
+      setStatus(reason);
+      return;
+    }
     const t0 = performance.now();
     const model = buildModel(readDrawing(bytes));
     const ms = Math.round(performance.now() - t0);

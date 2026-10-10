@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { aciToCss } from "../js/aci.js";
-import { boundsOf, dashFor, buildModel } from "../js/drawing.js";
+import { boundsOf, dashFor, buildModel, explainNotDrawing } from "../js/drawing.js";
 
 test("ACI: 基本色と、白/黒の背景反転", () => {
   assert.equal(aciToCss(1, false), "rgb(255,0,0)");
@@ -49,4 +49,10 @@ test("wasm(ブラウザ用に変換したezjww)がNodeでも初期化でき、JW
   await init();
   assert.equal(isJwwFile(new TextEncoder().encode("not a jww file")), false);
   assert.throws(() => readDrawing(new TextEncoder().encode("not a jww file")));
+});
+
+test("共有されたのがリンク(URL)なら、そのことを案内する", () => {
+  const url = new TextEncoder().encode("https://1drv.ms/u/s!abc");
+  assert.match(explainNotDrawing(url), /リンク/);
+  assert.equal(explainNotDrawing(new TextEncoder().encode("JwwData.")), null);
 });
