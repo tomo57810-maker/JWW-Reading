@@ -21,7 +21,7 @@
       "files": [
         {
           "name": "file",
-          "accept": ["application/octet-stream", "application/x-jww", "application/x-jwc", ".jww", ".jwc"]
+          "accept": ["application/octet-stream", "application/x-jww", "application/x-jwc", "*/*", ".jww", ".jwc"]
         }
       ]
     }
