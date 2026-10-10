@@ -1,6 +1,7 @@
 // Canvasに図面を描き、指(ピンチ・ドラッグ)やマウスで拡大・移動できるようにする。
 import { aciToCss } from "./aci.js";
 import { dashFor } from "./drawing.js";
+import { transformEntity } from "./edits.js";
 
 const MIN_LINE_PX = 0.8; // どこまで拡大縮小しても、線はこの太さ(CSS px)以上で描く
 const MIN_TEXT_PX = 3.5; // これより小さい文字は描かない
@@ -16,6 +17,9 @@ export class Viewer {
     this.dark = false;
     this.view = { s: 1, tx: 0, ty: 0 }; // 画面x = 図x*s + tx、画面y = -図y*s + ty
     this.fitScale = 1;
+    this.entities = null; // 編集を当てはめた図形の並び(nullを含む)。未設定なら、原本をそのまま使う
+    this.excluded = new Set(); // 選択中で、いま別に描いている図形の番号(通常の描画から外す)
+    this.floating = null; // 選択中の図形: { entities, scene, xf }。変換をかけて描く
     this.batches = [];
     this.texts = [];
     this.pointers = new Map();
@@ -31,6 +35,9 @@ export class Viewer {
   /** 読み込んだ図面を表示する。 */
   setModel(model, hiddenLayers = new Set()) {
     this.model = model;
+    this.entities = model.entities;
+    this.excluded = new Set();
+    this.floating = null;
     this.hiddenLayers = hiddenLayers;
     this.#rebuild();
     this.fit();
@@ -75,6 +82,29 @@ export class Viewer {
     this.#schedule();
   }
 
+  /** 編集を当てはめた図形の並びに差し替える(nullは消された図形)。 */
+  setEntities(list) {
+    this.entities = list;
+    this.#rebuild();
+    this.#schedule();
+  }
+
+  /** 選択中の図形を、通常の描画から外して、別に(変換をかけて)描く。indicesが空なら解除。 */
+  setFloating(indices) {
+    this.excluded = new Set(indices);
+    this.floating = indices.length
+      ? { entities: indices.map((i) => this.entities[i]).filter(Boolean), xf: null, scene: null }
+      : null;
+    this.#rebuild(); // 選択中の図形の描画データも、ここで作られる
+    this.#schedule();
+  }
+
+  /** 選択中の図形にかける変換(ドラッグ中の見た目)。nullなら、そのまま。 */
+  setFloatTransform(xf) {
+    if (this.floating) this.floating.xf = xf;
+    this.#schedule();
+  }
+
   /** 注釈などを変えたあとに、描き直す。 */
   redraw() {
     this.#schedule();
@@ -110,12 +140,14 @@ export class Viewer {
 
   /** 表示中のレイヤの図形を、色・太さ・線種ごとにまとめたPath2Dにする(拡大縮小のたびに作り直さない)。 */
   #rebuild() {
-    const built = this.#build(this.dark);
+    const built = this.#build(this.dark, this.entities ?? this.model?.entities ?? [], this.excluded);
     this.batches = built.batches;
     this.texts = built.texts;
+    if (this.floating) this.floating.scene = this.#build(this.dark, this.floating.entities, null);
   }
 
-  #build(dark) {
+  /** 図形の並びから、色・太さ・線種ごとのPath2Dと、文字の一覧を作る。skipは、描かない図形の番号。 */
+  #build(dark, entities, skip) {
     const batches = [];
     const texts = [];
     if (!this.model) return { batches, texts };
@@ -139,8 +171,9 @@ export class Viewer {
       }
       return b.path;
     };
-    for (const e of this.model.entities) {
-      if (this.hiddenLayers.has(e.layer)) continue;
+    for (let idx = 0; idx < entities.length; idx++) {
+      const e = entities[idx];
+      if (!e || (skip && skip.has(idx)) || this.hiddenLayers.has(e.layer)) continue;
       switch (e.type) {
         case "LINE": {
           const p = strokeOf(e);
@@ -208,7 +241,7 @@ export class Viewer {
     const m = marginPx ?? Math.min(w, h) * 0.02;
     const s = Math.min((w - m * 2) / bw, (h - m * 2) / bh);
     const view = { s, tx: (w - bw * s) / 2 - bounds.x0 * s, ty: (h + bh * s) / 2 + bounds.y0 * s };
-    const scene = this.dark ? { ...this.#build(false) } : this;
+    const scene = this.#build(false, this.entities ?? this.model.entities, null);
     this.#renderScene(ctx, { view, dpr: 1, width: w, height: h, dark: false, scene });
     if (withOverlay && this.overlay) this.overlay({ ctx, view, dpr: 1, width: w, height: h, forExport: true });
     return view;
@@ -237,6 +270,44 @@ export class Viewer {
     }
     ctx.setLineDash([]);
     this.#drawTexts(ctx, scene.texts, { view, dpr, width, height });
+    if (scene === this) this.#drawFloating(ctx, { view, dpr, width, height });
+  }
+
+  /** 選択中の図形を、変換(移動・回転・拡大縮小)をかけて描く。 */
+  #drawFloating(ctx, { view, dpr, width, height }) {
+    const f = this.floating;
+    if (!f?.scene) return;
+    const xf = f.xf;
+    const minLine = MIN_LINE_PX / view.s;
+    ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.tx, dpr * view.ty);
+    ctx.save();
+    if (xf) {
+      ctx.translate(xf.cx + xf.dx, xf.cy + xf.dy);
+      ctx.rotate(xf.theta);
+      ctx.scale(xf.s, xf.s);
+      ctx.translate(-xf.cx, -xf.cy);
+    }
+    const k = xf ? xf.s : 1;
+    for (const b of f.scene.batches) {
+      if (b.kind === "fill") {
+        ctx.fillStyle = b.css;
+        ctx.fill(b.path);
+      } else {
+        ctx.strokeStyle = b.css;
+        ctx.lineWidth = Math.max(b.lw, minLine) / k;
+        ctx.setLineDash((b.dash ?? []).map((d) => d));
+        ctx.stroke(b.path);
+      }
+    }
+    ctx.restore();
+    ctx.setLineDash([]);
+    const texts = xf
+      ? f.scene.texts.map((t) => {
+          const m = transformEntity({ type: "TEXT", x: t.x, y: t.y, end_x: t.ex, end_y: t.ey, height: t.h, rotation: t.rot }, xf);
+          return { ...t, x: m.x, y: m.y, ex: m.end_x, ey: m.end_y, h: m.height, rot: m.rotation };
+        })
+      : f.scene.texts;
+    this.#drawTexts(ctx, texts, { view, dpr, width, height });
   }
 
   #drawTexts(ctx, texts, { view, dpr, width: cw, height: ch }) {

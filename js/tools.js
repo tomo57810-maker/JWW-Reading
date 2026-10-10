@@ -6,7 +6,7 @@ const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
-export const MODES = ["move", "select", "dim", "area", "route", "pen", "text", "erase"];
+export const MODES = ["move", "obj", "select", "dim", "area", "route", "pen", "text", "erase"];
 
 export class ToolController {
   /**
@@ -19,13 +19,14 @@ export class ToolController {
    * @param {(id: string) => {x:number,y:number,w:number,h:number} | null} [deps.getTextRect] 画面に描いたコメントの四角(画面px)。選ぶときの当たり判定に使う
    * @param {() => void} [deps.onState] モードや作図中の状態が変わったとき
    */
-  constructor({ viewer, store, getScale, getSnap, askText, getTextRect = () => null, onState = () => {} }) {
+  constructor({ viewer, store, getScale, getSnap, askText, getTextRect = () => null, objectTool = null, onState = () => {} }) {
     this.viewer = viewer;
     this.store = store;
     this.getScale = getScale;
     this.getSnap = getSnap;
     this.askText = askText;
     this.getTextRect = getTextRect;
+    this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「図形」モード)
     this.onState = onState;
     this.mode = "move";
     this.draft = null; // { item: {kind, points, scale}, cursor }
@@ -44,8 +45,9 @@ export class ToolController {
     if (!MODES.includes(mode)) return;
     this.cancel();
     this.selectedId = null;
+    if (this.mode === "obj") this.objectTool?.clearSelection(); // 図形モードを出るとき、選択を解除する
     this.mode = mode;
-    this.viewer.tool = mode === "move" ? null : this;
+    this.viewer.tool = mode === "move" ? null : mode === "obj" ? this.objectTool : this;
     this.viewer.toolPointerId = null;
     this.viewer.toolPointerId = null;
     this.snap = null;
@@ -91,6 +93,11 @@ export class ToolController {
 
   /** 作図中なら、最後の点を取り消す。作図中でなければ、最後の注釈を取り消す。 */
   undo() {
+    if (this.mode === "obj") {
+      this.objectTool?.undo();
+      this.onState();
+      return;
+    }
     if (this.draft && this.draft.item.kind !== "pen" && this.draft.item.points.length > 0) {
       this.draft.item.points.pop();
       if (this.draft.item.points.length === 0) this.draft = null;

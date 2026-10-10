@@ -3,12 +3,15 @@ import { AnnotationStore, LocalAnnotationStorage, fingerprintOf, storageKey } fr
 import { drawAnnotations } from "./annotation-render.js";
 import { SnapIndex } from "./geometry.js";
 import { ToolController } from "./tools.js";
+import { EditStore } from "./edits.js";
+import { ObjectTool } from "./object-tool.js";
 import { makeJpegPdf } from "./pdf.js";
 
 const $ = (id) => document.getElementById(id);
 
 const HINTS = {
   move: "指で動かす・2本指で拡大",
+  obj: "なぞって範囲選択/タップで1つ選ぶ。枠をドラッグで移動、角で拡大、○で回転",
   select: "注釈をタップで選び、ドラッグで移動",
   dim: "2点をタップ(端点に吸着)",
   area: "角を順にタップ→「完了」",
@@ -21,6 +24,7 @@ const HINTS = {
 export function setupTools({ viewer, getModel, getFileName }) {
   const el = {
     bar: $("tools"), scale: $("scale"), hint: $("tool-hint"),
+    add: $("t-add"), rl: $("t-rl"), rr: $("t-rr"), big: $("t-big"), small: $("t-small"),
     done: $("t-done"), cancel: $("t-cancel"), copy: $("t-copy"), edit: $("t-edit"), del: $("t-del"), undo: $("t-undo"), exportBtn: $("t-export"),
     txt: $("txt"), txtInput: $("txt-input"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"),
@@ -30,10 +34,17 @@ export function setupTools({ viewer, getModel, getFileName }) {
   let snapIndex = null;
   let saveTimer = 0;
 
+  let edits = null; // 図面の図形の編集記録(図面を開くたびに作る)
+  let unloadedEdits = null; // 読み込めなかった保存済みの編集(上書きして失わないよう、そのまま持ち続ける)
+  const snapshot = () => ({
+    ...store.toJSON(fingerprint),
+    edits: edits && (edits.ops.length > 0 || !unloadedEdits) ? edits.toJSON() : (unloadedEdits ?? null),
+  });
+
   const save = () => {
     if (!fingerprint) return;
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => storage.set(storageKey(fingerprint), store.toJSON(fingerprint)), 300);
+    saveTimer = setTimeout(() => storage.set(storageKey(fingerprint), snapshot()), 300);
   };
 
   const textRects = new Map(); // 画面に描いたコメントの四角(選ぶときの当たり判定用)
@@ -48,9 +59,12 @@ export function setupTools({ viewer, getModel, getFileName }) {
     return Number.isFinite(n) && n >= 1 ? n : 100;
   };
 
+  const objectTool = new ObjectTool({ viewer, edits: null, onState: () => syncUi() });
+
   const tools = new ToolController({
     viewer,
     store,
+    objectTool,
     getScale,
     getSnap: () => snapIndex,
     askText: (at, initial) => askText(at, initial),
@@ -61,6 +75,7 @@ export function setupTools({ viewer, getModel, getFileName }) {
   viewer.overlay = (frame) => {
     if (!frame.forExport) textRects.clear();
     drawAnnotations(frame, { items: store.items, draft: tools.draft, snap: tools.snap, selectedId: tools.selectedId, rects: textRects });
+    if (tools.mode === "obj") objectTool.drawOverlay(frame);
   };
 
   function askText(at, initial = "") {
@@ -87,14 +102,32 @@ export function setupTools({ viewer, getModel, getFileName }) {
     el.del.hidden = !sel;
     el.edit.hidden = sel?.kind !== "text";
     if (sel) el.hint.textContent = "選択中: ドラッグで移動";
+    const obj = tools.mode === "obj";
+    const objSel = obj && objectTool.hasSelection;
+    el.add.hidden = !obj;
+    el.add.setAttribute("aria-pressed", String(objectTool.additive));
+    for (const b of [el.rl, el.rr, el.big, el.small]) b.hidden = !objSel;
+    if (objSel) {
+      el.copy.hidden = false;
+      el.del.hidden = false;
+      el.hint.textContent = `${objectTool.selection.length}個を選択中`;
+    }
   }
 
   for (const b of el.bar.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
   el.done.addEventListener("click", () => tools.finish());
   el.cancel.addEventListener("click", () => tools.cancel());
   el.undo.addEventListener("click", () => tools.undo());
-  el.copy.addEventListener("click", () => tools.copySelected());
-  el.del.addEventListener("click", () => tools.deleteSelected());
+  el.copy.addEventListener("click", () => (tools.mode === "obj" ? objectTool.copy() : tools.copySelected()));
+  el.del.addEventListener("click", () => (tools.mode === "obj" ? objectTool.delete() : tools.deleteSelected()));
+  el.add.addEventListener("click", () => {
+    objectTool.additive = !objectTool.additive;
+    syncUi();
+  });
+  el.rl.addEventListener("click", () => objectTool.rotateBy(90));
+  el.rr.addEventListener("click", () => objectTool.rotateBy(-90));
+  el.big.addEventListener("click", () => objectTool.scaleBy(1.25));
+  el.small.addEventListener("click", () => objectTool.scaleBy(0.8));
   el.edit.addEventListener("click", () => tools.editSelectedText());
   el.scale.addEventListener("change", () => {
     store.settings.scale = getScale();
@@ -148,7 +181,7 @@ export function setupTools({ viewer, getModel, getFileName }) {
   $("ex-pdf").addEventListener("click", () => exportPdf(4000));
   $("ex-pdf-hi").addEventListener("click", () => exportPdf(7000));
   $("ex-json").addEventListener("click", () => {
-    const json = JSON.stringify(store.toJSON(fingerprint), null, 2);
+    const json = JSON.stringify(snapshot(), null, 2);
     deliver(new Blob([json], { type: "application/json" }), `${baseName()}_注釈.json`);
     el.exMsg.textContent = `注釈 ${store.items.length}件を保存しました`;
   });
@@ -161,10 +194,24 @@ export function setupTools({ viewer, getModel, getFileName }) {
       if (data?.app !== "JWW-Reading") throw new Error("このアプリの注釈ファイルではありません");
       store.load(data);
       if (data.settings?.scale) el.scale.value = data.settings.scale;
-      el.exMsg.textContent = `注釈 ${store.items.length}件を読み込みました`;
+      const r = edits ? edits.load(data.edits) : { ok: true };
+      objectTool.refresh();
+      el.exMsg.textContent = `注釈 ${store.items.length}件を読み込みました` + (r.ok ? "" : `(図形の編集は、${r.reason}ため読み込めませんでした)`);
       save();
     } catch (err) {
       el.exMsg.textContent = `読み込めませんでした: ${err?.message ?? err}`;
+    }
+  });
+  $("ex-reset-edits").addEventListener("click", () => {
+    if (!edits || edits.ops.length === 0) {
+      el.exMsg.textContent = "図形の編集はありません";
+      return;
+    }
+    if (confirm(`図形の編集 ${edits.ops.length}件を、すべて元に戻します。よろしいですか?`)) {
+      objectTool.clearSelection();
+      edits.clear();
+      objectTool.refresh();
+      el.exMsg.textContent = "図形の編集を元に戻しました";
     }
   });
   $("ex-clear").addEventListener("click", () => {
@@ -180,10 +227,23 @@ export function setupTools({ viewer, getModel, getFileName }) {
     /** 図面を開いたとき: 吸着用の点を作り、保存済みの注釈を呼び戻す。 */
     async onOpened(model, file, bytes) {
       tools.setMode("move");
+      objectTool.clearSelection();
       snapIndex = new SnapIndex(model.entities);
       fingerprint = await fingerprintOf(file.name, bytes);
       const saved = await storage.get(storageKey(fingerprint));
+      let snapTimer = 0;
+      edits = new EditStore(model.entities, (e) => {
+        viewer.entities = e.entities;
+        clearTimeout(snapTimer);
+        snapTimer = setTimeout(() => (snapIndex = new SnapIndex(e.entities.filter(Boolean))), 200); // 編集後の端点に吸着する
+        save();
+      });
+      objectTool.edits = edits;
+      const restored = edits.load(saved?.edits);
+      unloadedEdits = restored.ok ? null : saved.edits;
+      viewer.setEntities(edits.entities);
       store.load(saved ?? { items: [] });
+      if (!restored.ok) el.hint.textContent = `保存済みの図形の編集は、${restored.reason}ため、読み込めませんでした`;
       el.scale.value = store.settings.scale ?? model.writeScale ?? 100;
       el.bar.hidden = false;
       syncUi();

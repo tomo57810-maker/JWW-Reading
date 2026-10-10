@@ -247,3 +247,4 @@ body {
   color: #5c4a00;
   font-size: 14px;
 }
+.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
