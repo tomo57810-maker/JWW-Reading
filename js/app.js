@@ -123,7 +123,26 @@ async function openSharedFile() {
 }
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch((err) => console.warn("Service Workerを登録できませんでした", err));
+  navigator.serviceWorker
+    .register("./sw.js")
+    .then((reg) => {
+      // アプリを開いたままでも、画面に戻ったときに、新しい版がないか確認する
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) reg.update().catch(() => {});
+      });
+    })
+    .catch((err) => console.warn("Service Workerを登録できませんでした", err));
+  let hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) {
+      hadController = true; // 初めての登録は、更新ではない
+      return;
+    }
+    // 新しい版に切り替わった。図面を開いていなければ自動で読み込み直し、開いていれば本人に選んでもらう
+    if (!state.model) location.reload();
+    else $("update").hidden = false;
+  });
+  $("update-btn").addEventListener("click", () => location.reload());
 }
 openSharedFile();
 

@@ -1,5 +1,5 @@
 // Service Worker: ①オフラインでも開けるよう画面部品を保存 ②他のアプリ(OneDriveなど)から「共有」されたJWWを受け取る。
-const CACHE = "jww-reading-v12";
+const CACHE = "jww-reading-v13";
 const SHARED_CACHE = "jww-reading-shared";
 const SHARE_PATH = "./share-target";
 const SHARED_KEY = new URL("./__shared__", self.registration.scope).href;
@@ -30,7 +30,21 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // 配信元(GitHub Pages)のキャッシュ(最大10分)に古い版が残っていても拾わないよう、必ずサーバーに確認して取る
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((c) =>
+        Promise.all(
+          SHELL.map(async (url) => {
+            const res = await fetch(new Request(url, { cache: "reload" }));
+            if (!res.ok) throw new Error(`${url} を取得できませんでした: ${res.status}`);
+            await c.put(url, res);
+          })
+        )
+      )
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (event) => {
@@ -52,7 +66,7 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== location.origin) return;
   // 通信できるときは最新を取り、できないときは保存したものを使う
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: "no-cache" }) // 配信元のキャッシュを使わず、毎回サーバーに「更新があるか」を確認する
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
