@@ -26,9 +26,9 @@ export class Viewer {
   }
 
   /** 読み込んだ図面を表示する。 */
-  setModel(model) {
+  setModel(model, hiddenLayers = new Set()) {
     this.model = model;
-    this.hiddenLayers = new Set();
+    this.hiddenLayers = hiddenLayers;
     this.#rebuild();
     this.fit();
   }

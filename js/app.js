@@ -1,17 +1,24 @@
-import { init, readDrawing } from "../vendor/ezjww.mjs";
+import { init, readDrawing, readHeader } from "../vendor/ezjww.mjs";
 import { buildModel, explainNotDrawing } from "./drawing.js";
 import { Viewer } from "./viewer.js";
+import { LayerPanel } from "./layer-panel.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
   file: $("file"), name: $("name"), fit: $("fit"), layersBtn: $("layers-btn"), theme: $("theme"),
   stage: $("stage"), canvas: $("canvas"), empty: $("empty"), busy: $("busy"), status: $("status"),
   panel: $("panel"), panelClose: $("panel-close"), allOn: $("all-on"), allOff: $("all-off"),
-  search: $("layer-search"), list: $("layer-list"),
+  search: $("layer-search"), list: $("layer-list"), showEmpty: $("show-empty"),
 };
 
-const state = { model: null, hidden: new Set(), dark: false };
+const state = { model: null, dark: false };
 const viewer = new Viewer(els.canvas);
+const layerPanel = new LayerPanel({
+  list: els.list,
+  search: els.search,
+  showEmpty: els.showEmpty,
+  onChange: (hidden) => viewer.setHiddenLayers(hidden),
+});
 
 const wasmReady = init().catch((err) => {
   setStatus(`読み込み部品の準備に失敗しました: ${err.message}`);
@@ -33,58 +40,22 @@ async function openFile(file) {
       return;
     }
     const t0 = performance.now();
-    const model = buildModel(readDrawing(bytes));
+    const model = buildModel(readDrawing(bytes), readHeader(bytes));
     const ms = Math.round(performance.now() - t0);
     state.model = model;
-    state.hidden = new Set();
-    viewer.setModel(model);
+    layerPanel.setModel(model);
+    viewer.setModel(model, new Set(layerPanel.hidden));
     els.name.textContent = file.name;
     els.empty.hidden = true;
     els.fit.disabled = false;
     els.layersBtn.disabled = false;
-    renderLayerList();
     const unsupported = model.unsupported.length ? ` / 未対応の図形 ${model.unsupported.length}個は表示していません` : "";
-    setStatus(`図形 ${model.entities.length.toLocaleString()}個 / レイヤ ${model.layerCounts.size} / 読み込み ${ms}ms${unsupported}`);
+    setStatus(`図形 ${model.entities.length.toLocaleString()}個 / レイヤ ${model.layerCount} / 読み込み ${ms}ms${unsupported}`);
   } catch (err) {
     setStatus(`開けませんでした: ${err?.message ?? err}`);
   } finally {
     els.busy.hidden = true;
   }
-}
-
-function renderLayerList() {
-  const filter = els.search.value.trim().toLowerCase();
-  els.list.replaceChildren();
-  if (!state.model) return;
-  for (const [layer, count] of state.model.layerCounts) {
-    if (filter && !layer.toLowerCase().includes(filter)) continue;
-    const li = document.createElement("li");
-    const label = document.createElement("label");
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.checked = !state.hidden.has(layer);
-    box.addEventListener("change", () => {
-      if (box.checked) state.hidden.delete(layer);
-      else state.hidden.add(layer);
-      viewer.setHiddenLayers(new Set(state.hidden));
-    });
-    const name = document.createElement("span");
-    name.className = "lname";
-    name.textContent = layer;
-    const n = document.createElement("span");
-    n.className = "lcount";
-    n.textContent = count.toLocaleString();
-    label.append(box, name, n);
-    li.append(label);
-    els.list.append(li);
-  }
-}
-
-function setAllLayers(visible) {
-  if (!state.model) return;
-  state.hidden = visible ? new Set() : new Set(state.model.layerCounts.keys());
-  viewer.setHiddenLayers(new Set(state.hidden));
-  renderLayerList();
 }
 
 els.file.addEventListener("change", () => {
@@ -95,9 +66,8 @@ els.file.addEventListener("change", () => {
 els.fit.addEventListener("click", () => viewer.fit());
 els.layersBtn.addEventListener("click", () => { els.panel.hidden = !els.panel.hidden; });
 els.panelClose.addEventListener("click", () => { els.panel.hidden = true; });
-els.allOn.addEventListener("click", () => setAllLayers(true));
-els.allOff.addEventListener("click", () => setAllLayers(false));
-els.search.addEventListener("input", renderLayerList);
+els.allOn.addEventListener("click", () => layerPanel.setAll(true));
+els.allOff.addEventListener("click", () => layerPanel.setAll(false));
 els.theme.addEventListener("click", () => {
   state.dark = !state.dark;
   document.documentElement.dataset.theme = state.dark ? "dark" : "light";

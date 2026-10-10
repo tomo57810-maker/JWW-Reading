@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { aciToCss } from "../js/aci.js";
-import { boundsOf, dashFor, buildModel, explainNotDrawing } from "../js/drawing.js";
+import { boundsOf, dashFor, buildModel, explainNotDrawing, layerLabel } from "../js/drawing.js";
 
 test("ACI: 基本色と、白/黒の背景反転", () => {
   assert.equal(aciToCss(1, false), "rgb(255,0,0)");
@@ -30,16 +30,67 @@ test("範囲: 線・円・文字を含めて計算する", () => {
   assert.equal(boundsOf([]), null);
 });
 
-test("モデル: レイヤ別・種類別の個数を数える", () => {
-  const m = buildModel({
-    entities: [
-      { type: "LINE", layer: "A", x1: 0, y1: 0, x2: 1, y2: 1 },
-      { type: "LINE", layer: "A", x1: 0, y1: 0, x2: 1, y2: 1 },
-      { type: "TEXT", layer: "B", x: 0, y: 0 },
-    ],
-  });
-  assert.equal(m.layerCounts.get("A"), 2);
+// 16グループ×16レイヤの表(ezjwwと同じ並び: グループ番号×16+レイヤ番号)を作る
+function fakeLayers(namesByIndex) {
+  return Array.from({ length: 256 }, (_, i) => ({ name: namesByIndex[i] ?? `ﾚｲﾔ${i}` }));
+}
+function fakeHeader(groupNames, layerNames = {}, states = {}) {
+  return {
+    layer_groups: Array.from({ length: 16 }, (_, g) => ({
+      name: groupNames[g] ?? `${g}グル-プ`,
+      state: states[`g${g}`] ?? 2,
+      layers: Array.from({ length: 16 }, (_, l) => ({ name: layerNames[g * 16 + l] ?? `ﾚｲﾔ${l}`, state: states[g * 16 + l] ?? 2 })),
+    })),
+  };
+}
+
+test("レイヤ番号の表記は、Jw_cadと同じ16進(0〜9、A〜F)", () => {
+  assert.equal(layerLabel(0, 0), "0-0");
+  assert.equal(layerLabel(10, 3), "A-3");
+  assert.equal(layerLabel(15, 15), "F-F");
+});
+
+test("モデル: 図形のレイヤを、グループ→レイヤの順に整理して数える", () => {
+  const dxfLayers = fakeLayers({ 160: "給水_A-0", 161: "給湯" });
+  const header = fakeHeader({ 10: "給排水衛生設備" }, { 160: "給水", 161: "給湯" });
+  const m = buildModel(
+    {
+      layers: dxfLayers,
+      entities: [
+        { type: "LINE", layer: "給水_A-0", x1: 0, y1: 0, x2: 1, y2: 1 },
+        { type: "LINE", layer: "給水_A-0", x1: 0, y1: 0, x2: 1, y2: 1 },
+        { type: "TEXT", layer: "給湯", x: 0, y: 0 },
+      ],
+    },
+    header
+  );
+  assert.equal(m.groups.length, 16);
+  const g = m.groups[10];
+  assert.equal(g.name, "給排水衛生設備");
+  assert.equal(g.layers[0].name, "給水");
+  assert.equal(g.layers[0].label, "A-0");
+  assert.equal(g.layers[0].count, 2);
+  assert.equal(g.layers[1].count, 1);
+  assert.equal(m.layerCount, 2);
+  assert.equal(m.writeGroup, null);
   assert.equal(m.typeCounts.get("TEXT"), 1);
+});
+
+test("モデル: Jw_cadで非表示(状態0)のグループ・レイヤは、最初から隠す", () => {
+  const dxfLayers = fakeLayers({ 0: "A", 1: "B", 16: "C" });
+  const header = fakeHeader({}, {}, { 1: 0, g1: 0 });
+  const entity = (layer) => ({ type: "POINT", layer, x: 0, y: 0 });
+  const m = buildModel({ layers: dxfLayers, entities: [entity("A"), entity("B"), entity("C")] }, header);
+  assert.equal(m.initiallyHidden.has("A"), false);
+  assert.equal(m.initiallyHidden.has("B"), true); // レイヤの状態が0
+  assert.equal(m.initiallyHidden.has("C"), true); // グループの状態が0
+});
+
+test("モデル: 表にないレイヤ名の図形や、ヘッダがない場合も、見えなくならない", () => {
+  const m = buildModel({ layers: [], entities: [{ type: "POINT", layer: "謎", x: 0, y: 0 }] }, null);
+  assert.equal(m.groups.length, 1);
+  assert.equal(m.groups[0].layers[0].name, "謎");
+  assert.equal(m.groups[0].layers[0].count, 1);
 });
 
 test("wasm(ブラウザ用に変換したezjww)がNodeでも初期化でき、JWWを判定できる", async () => {
