@@ -9,6 +9,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#0b63ce">
   <link rel="stylesheet" href="css/app.css">
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/controls/OrbitControls.js":"./vendor/OrbitControls.js"}}</script>
 </head>
 <body>
   <header class="bar">
@@ -19,6 +20,7 @@
     <button id="od-btn" class="btn" type="button">OneDrive</button>
     <button id="fit" class="btn" type="button" disabled>全体</button>
     <button id="layers-btn" class="btn" type="button" disabled>レイヤ</button>
+    <button id="v3d-btn" class="btn" type="button" disabled>3D</button>
     <button id="theme" class="btn" type="button" aria-label="背景色を切り替え">白/黒</button>
   </header>
 
@@ -73,6 +75,7 @@
       <button id="t-rr" class="btn small" type="button" hidden>↻90°</button>
       <button id="t-big" class="btn small" type="button" hidden>×1.25</button>
       <button id="t-small" class="btn small" type="button" hidden>×0.8</button>
+      <button id="t-3d" class="btn small" type="button" hidden>3D化</button>
       <button id="t-copy" class="btn small" type="button" hidden>複製</button>
       <button id="t-edit" class="btn small" type="button" hidden>書き換え</button>
       <button id="t-del" class="btn small" type="button" hidden>削除</button>
@@ -144,6 +147,45 @@
       <p class="note">控えは、この端末の中だけに残ります(最大5件)。不要になったら、削除してください。</p>
     </div>
   </dialog>
+
+  <dialog id="p3" class="od">
+    <form method="dialog" class="od-body">
+      <strong>選んだ図形を3D化する</strong>
+      <p id="p3-hint" class="note"></p>
+      <label class="opt">種類
+        <select id="p3-kind" class="search">
+          <option value="wall">壁・躯体(線を押し出す。円は円柱)</option>
+          <option value="pipe">配管(線を円筒に。円は立上り管)</option>
+        </select>
+      </label>
+      <label class="opt"><span id="p3-z0-label">下端の高さ</span> <input id="p3-z0" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:7em"> mm</label>
+      <label class="opt"><span id="p3-h-label">高さ</span> <input id="p3-h" class="search" type="number" inputmode="decimal" step="any" value="2700" style="width:7em"> mm</label>
+      <label class="opt" id="p3-t-row">壁の厚み(0なら薄い面) <input id="p3-t" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:7em"> mm</label>
+      <label class="opt" id="p3-d-row">管の外径 <input id="p3-d" class="search" type="number" inputmode="decimal" step="any" value="50" style="width:7em"> mm</label>
+      <label class="opt">名前(任意) <input id="p3-label" class="search" type="text" maxlength="30" placeholder="例: 外壁、給水管" style="width:11em"></label>
+      <p class="note">高さの数値は、実寸(mm)です。床(FL)を0とします。</p>
+      <div class="row">
+        <button class="btn" value="cancel" formnovalidate>やめる</button>
+        <button class="btn primary" value="ok">3D化する</button>
+      </div>
+    </form>
+  </dialog>
+
+  <section id="v3d" class="v3d" hidden aria-label="3D表示">
+    <div class="v3d-bar">
+      <button id="v3d-close" class="btn small" type="button">閉じる</button>
+      <button class="btn small" type="button" data-v3d-view="iso">斜め</button>
+      <button class="btn small" type="button" data-v3d-view="top">真上</button>
+      <button class="btn small" type="button" data-v3d-view="front">正面</button>
+      <label class="opt"><input id="v3d-plan" type="checkbox" checked> 図面を床に表示</label>
+      <button id="v3d-list-btn" class="btn small" type="button">部品一覧</button>
+    </div>
+    <div class="v3d-stage"><canvas id="v3d-canvas"></canvas></div>
+    <div id="v3d-info" class="v3d-info" role="status"></div>
+    <div id="v3d-list" class="v3d-list" hidden>
+      <ul id="v3d-parts" class="od-list"></ul>
+    </div>
+  </section>
 
   <dialog id="txt" class="od">
     <form method="dialog" class="od-body">

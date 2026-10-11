@@ -11,6 +11,7 @@
   },
   "devDependencies": {
     "@azure/msal-browser": "4.30.0",
-    "ezjww": "0.6.0"
+    "ezjww": "0.6.0",
+    "three": "0.180.0"
   }
 }

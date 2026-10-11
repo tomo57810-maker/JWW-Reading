@@ -8,6 +8,8 @@ import { EditStore } from "./edits.js";
 import { ObjectTool } from "./object-tool.js";
 import { makeJpegPdf } from "./pdf.js";
 import { buildDxf } from "./dxf-export.js";
+import { PartStore, PART_KINDS, buildScene, describePart, isPartSource } from "./parts3d.js";
+import { View3D } from "./view3d.js";
 import { readDxfText } from "../vendor/ezjww.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -49,7 +51,7 @@ const prefs = {
 
 /** 変更の有無の判定に使う、保存内容の核(注釈・縮尺・図形の編集記録)。 */
 export function coreOf(snap) {
-  return JSON.stringify({ items: snap?.items ?? [], scale: snap?.settings?.scale ?? null, ops: snap?.edits?.ops ?? [] });
+  return JSON.stringify({ items: snap?.items ?? [], scale: snap?.settings?.scale ?? null, ops: snap?.edits?.ops ?? [], parts: snap?.parts?.items ?? [] });
 }
 
 export function setupTools({ viewer, getModel, getFileName, storage, ensureLayerVisible = () => {} }) {
@@ -62,13 +64,14 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     txt: $("txt"), txtInput: $("txt-input"), txtTitle: $("txt-title"), txtSizeRow: $("txt-size-row"), txtSize: $("txt-size"), resume: $("resume"),
     opts: $("opts"), mOpts: $("m-opts"), aOpts: $("a-opts"), pick: $("t-pick"), attrInfo: $("attr-info"), attrChip: $("attr-chip"), attrReset: $("t-attr-reset"),
     groups: [...document.querySelectorAll("[data-group]")],
-    sOpts: $("s-opts"),
+    sOpts: $("s-opts"), to3d: $("t-3d"), v3dBtn: $("v3d-btn"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"), exAutosave: $("ex-autosave"), exDraft: $("ex-draft"),
   };
 
   let storeKey = null; // 図面ごとの保存先(中身のSHA-256)。保存した状態=storeKey、下書き=draft:storeKey
   let snapIndex = null;
   let edits = null; // 図面の図形の編集記録(図面を開くたびに作る)
+  let unloadedParts = null; // 読み込めなかった保存済みの3D部品(そのまま持ち続ける)
   let sourceBytes = null; // 開いている図面の原本(DXFへの書き出しに使う)
   let unloadedEdits = null; // 読み込めなかった保存済みの編集(上書きして失わないよう、そのまま持ち続ける)
   let savedCore = coreOf(null); // 最後に保存した状態の核。いまの状態と違えば「未保存」
@@ -102,6 +105,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     settings: store.settings,
     items: store.items,
     edits: edits && (edits.ops.length > 0 || !unloadedEdits) ? edits.toJSON() : (unloadedEdits ?? null),
+    parts: edits && (parts.list.length > 0 || !unloadedParts) ? parts.toJSON(edits.baseCount) : (unloadedParts ?? null),
   });
 
   const isDirty = () => coreOf(snapshot()) !== savedCore;
@@ -153,6 +157,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     syncUi(); // 取り消しなどで、選んでいた注釈がなくなったときに、ボタンの表示を合わせる
   });
   store.onCheckpoint = () => history.push("ann");
+  const parts = new PartStore(() => afterChange()); // 3D部品(平面図の図形に、高さなどをつけたもの)
+  parts.onAdd = () => history.push("part");
 
   const getScale = () => {
     const n = Math.round(Number(el.scale.value));
@@ -259,7 +265,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     }
     if (tools.undoDraft()) return;
     const kind = history.pop();
-    if (kind === "edit") objectTool.undo();
+    if (kind === "part") parts.undo();
+    else if (kind === "edit") objectTool.undo();
     else if (kind === "ann") store.undo();
     else if (!objectTool.undo()) store.undo();
     syncUi();
@@ -304,6 +311,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     el.add.hidden = !obj || Boolean(busy);
     el.add.setAttribute("aria-pressed", String(objectTool.additive));
     for (const b of [el.rl, el.rr, el.big, el.small, el.base, el.stretch]) b.hidden = !objSel || Boolean(busy);
+    el.to3d.hidden = !objSel || Boolean(busy);
     if (objSel && !busy) {
       el.copy.hidden = false;
       el.del.hidden = false;
@@ -355,6 +363,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   el.big.addEventListener("click", () => objectTool.scaleBy(1.25));
   el.small.addEventListener("click", () => objectTool.scaleBy(0.8));
   el.edit.addEventListener("click", () => tools.editSelectedText());
+  el.to3d.addEventListener("click", () => makePart());
+  el.v3dBtn.addEventListener("click", () => openView3d());
   el.scale.addEventListener("change", () => {
     store.settings.scale = getScale();
     afterChange();
@@ -366,6 +376,125 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     el.ex.showModal();
   });
   el.ex.querySelector("[data-ex-close]").addEventListener("click", () => el.ex.close());
+
+  // ---- 3D ----
+  const p3 = { dlg: $("p3"), hint: $("p3-hint"), kind: $("p3-kind"), z0: $("p3-z0"), h: $("p3-h"), t: $("p3-t"), d: $("p3-d"), label: $("p3-label"), z0Label: $("p3-z0-label"), hLabel: $("p3-h-label"), tRow: $("p3-t-row"), dRow: $("p3-d-row") };
+  const p3Defaults = {
+    wall: { z0: 0, h: 2700, t: 0, d: 50 },
+    pipe: { z0: 2500, h: 1000, t: 0, d: 50 },
+  };
+  const syncP3 = () => {
+    const wall = p3.kind.value === "wall";
+    p3.z0Label.textContent = wall ? "下端の高さ" : "配管の中心の高さ";
+    p3.hLabel.textContent = wall ? "高さ" : "立上りの長さ(平面図の円のとき)";
+    p3.tRow.hidden = !wall;
+    p3.dRow.hidden = wall;
+  };
+  p3.kind.addEventListener("change", () => {
+    const d = JSON.parse(prefs.get(`p3.${p3.kind.value}`, "null")) ?? p3Defaults[p3.kind.value];
+    p3.z0.value = d.z0;
+    p3.h.value = d.h;
+    p3.t.value = d.t;
+    p3.d.value = d.d;
+    syncP3();
+  });
+
+  /** 選んでいる図形を、3D部品にする(種類・高さなどを聞く)。 */
+  async function makePart() {
+    const ids = objectTool.selection.filter((i) => isPartSource(edits?.entities[i]));
+    if (ids.length === 0) {
+      flash("線・円弧・円を選んでください(文字などは3Dにできません)");
+      return;
+    }
+    p3.hint.textContent = `選んだ線・円弧・円 ${ids.length}個を、3Dの部品にします。`;
+    p3.kind.dispatchEvent(new Event("change"));
+    p3.label.value = "";
+    const ok = await new Promise((resolve) => {
+      p3.dlg.addEventListener("close", () => resolve(p3.dlg.returnValue === "ok"), { once: true });
+      p3.dlg.returnValue = "cancel";
+      p3.dlg.showModal();
+    });
+    if (!ok) return;
+    const kind = p3.kind.value;
+    const num = (el_, fallback) => (Number.isFinite(Number(el_.value)) && el_.value !== "" ? Number(el_.value) : fallback);
+    const vals = { z0: num(p3.z0, 0), h: num(p3.h, 0), t: Math.max(0, num(p3.t, 0)), d: num(p3.d, 50) };
+    if (kind === "wall" && !(vals.h > 0)) return flash("高さは、0より大きい数にしてください");
+    if (kind === "pipe" && !(vals.d > 0)) return flash("外径は、0より大きい数にしてください");
+    prefs.set(`p3.${kind}`, JSON.stringify(vals));
+    const first = edits.entities[ids[0]];
+    parts.add({
+      kind, ids, z0: vals.z0, h: vals.h, ...(kind === "wall" ? { thick: vals.t } : { dia: vals.d }),
+      color: Number.isInteger(first?.color) ? first.color : 7, label: p3.label.value.trim(),
+    });
+    flash(`3D化しました(右上の「3D」で見られます)`);
+  }
+
+  let view3d = null;
+  const v3 = { root: $("v3d"), canvas: $("v3d-canvas"), info: $("v3d-info"), plan: $("v3d-plan"), list: $("v3d-list"), parts: $("v3d-parts"), listBtn: $("v3d-list-btn") };
+
+  function refreshView3d({ resetView = false } = {}) {
+    const scale = getScale();
+    const shapes = buildScene(parts.list, edits.entities, { scale });
+    view3d.setParts(shapes);
+    view3d.setPlan(edits.entities, { scale, hidden: viewer.hiddenLayers, visible: v3.plan.checked });
+    if (resetView) view3d.setView("iso");
+    v3.info.textContent = parts.list.length === 0
+      ? "まだ3D化した部品がありません。「選択」で線などを選び、「3D化」を押してください。"
+      : `部品 ${parts.list.length}個(縮尺 1/${scale})。指1本で回す、2本で拡大・移動`;
+    renderPartList();
+  }
+
+  function renderPartList() {
+    v3.parts.replaceChildren();
+    for (const p of parts.list) {
+      const li = document.createElement("li");
+      li.className = "row-part";
+      const span = document.createElement("span");
+      span.textContent = `[${PART_KINDS[p.kind]}] ${describePart(p)}`;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn small";
+      del.textContent = "削除";
+      del.addEventListener("click", () => {
+        parts.remove(p.id);
+        refreshView3d();
+      });
+      li.append(span, del);
+      v3.parts.append(li);
+    }
+    if (parts.list.length === 0) {
+      const li = document.createElement("li");
+      li.className = "note";
+      li.textContent = "部品はありません";
+      v3.parts.append(li);
+    }
+  }
+
+  async function openView3d() {
+    if (!edits) return;
+    v3.root.hidden = false;
+    v3.info.textContent = "3Dを準備しています…";
+    try {
+      view3d ??= new View3D(v3.canvas);
+      await view3d.init();
+      view3d.resize();
+      refreshView3d({ resetView: true });
+      view3d.start();
+    } catch (err) {
+      v3.info.textContent = `3Dを表示できませんでした: ${err?.message ?? err}`;
+    }
+  }
+
+  $("v3d-close").addEventListener("click", () => {
+    v3.root.hidden = true;
+    view3d?.stop();
+  });
+  for (const b of v3.root.querySelectorAll("[data-v3d-view]")) b.addEventListener("click", () => view3d?.setView(b.dataset.v3dView));
+  v3.plan.addEventListener("change", () => view3d && refreshView3d());
+  v3.listBtn.addEventListener("click", () => {
+    v3.list.hidden = !v3.list.hidden;
+  });
+  window.addEventListener("resize", () => !v3.root.hidden && view3d?.resize());
 
   // ---- 保存の設定 ----
   el.exAutosave.addEventListener("change", () => {
@@ -509,6 +638,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
       store.load(snap ?? { items: [] });
       const r = edits ? edits.load(snap?.edits) : { ok: true };
       unloadedEdits = r.ok ? null : snap?.edits;
+      const pr = edits ? parts.load(snap?.parts, edits.baseCount) : { ok: true };
+      unloadedParts = pr.ok ? null : snap?.parts;
       history.length = 0;
       objectTool.clearSelection();
       objectTool.refresh();
@@ -556,6 +687,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
         objectTool.clearSelection();
         storeKey = key;
         sourceBytes = bytes;
+        el.v3dBtn.disabled = false;
         snapIndex = new SnapIndex(model.entities);
         let snapTimer = 0;
         edits = new EditStore(model.entities, (e) => {

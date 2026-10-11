@@ -251,3 +251,12 @@ body {
 .btn.dirty { background: #fff3cd; border-color: #e0a800; color: #5c4a00; font-weight: 700; }
 .tool-row .tool-row { overflow: visible; flex: 1 1 auto; min-width: 0; }
 .chip { flex: none; width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--line); background: #888; }
+
+.v3d { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
+.v3d-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.v3d-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+#v3d-canvas { display: block; touch-action: none; }
+.v3d-info { padding: 4px 12px; padding-bottom: max(4px, env(safe-area-inset-bottom)); font-size: 12px; color: var(--muted); background: var(--surface); border-top: 1px solid var(--line); }
+.v3d-list { position: absolute; left: 0; right: 0; bottom: 30px; max-height: 45vh; overflow-y: auto; background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -6px 24px rgba(0,0,0,.18); padding: 8px 12px; }
+.v3d-list .row-part { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; }
+.v3d-list .row-part span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

@@ -172,3 +172,68 @@ test("DXF書き出し: 図形の部分だけを編集後の図形に差し替え
 test("DXF書き出し: 原本のDXFに図形の部分がなければ、わかりやすい例外", () => {
   assert.throws(() => buildDxf("  0\nEOF\n", []), /図形の部分/);
 });
+
+import { buildScene, PartStore, describePart } from "../js/parts3d.js";
+
+const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+test("3D: 壁は、線を高さぶん押し出した面になる(縮尺1/100: 用紙10mm=実寸1m)", () => {
+  const ents = [{ type: "LINE", x1: 0, y1: 0, x2: 10, y2: 0 }, null];
+  const sc = buildScene([{ id: "a", kind: "wall", ids: [0, 1], z0: 0, h: 2700 }], ents, { scale: 100 });
+  assert.equal(sc.quads.length, 1);
+  const [p0, p1, p2] = sc.quads[0].c;
+  assert.ok(near(p1[0] - p0[0], 1)); // 横: 1m
+  assert.ok(near(p2[1] - p1[1], 2.7)); // 高さ: 2.7m
+});
+
+test("3D: 壁に厚みを指定すると、箱(6面)になり、厚みは実寸", () => {
+  const ents = [{ type: "LINE", x1: 0, y1: 0, x2: 10, y2: 0 }];
+  const sc = buildScene([{ id: "a", kind: "wall", ids: [0], z0: 100, h: 1000, thick: 200 }], ents, { scale: 100 });
+  assert.equal(sc.quads.length, 6);
+  const zs = sc.quads.flatMap((q) => q.c.map((p) => p[2]));
+  assert.ok(near(Math.max(...zs) - Math.min(...zs), 0.2)); // 厚み200mm
+  const ys = sc.quads.flatMap((q) => q.c.map((p) => p[1]));
+  assert.ok(near(Math.min(...ys), 0.1) && near(Math.max(...ys), 1.1));
+});
+
+test("3D: 配管は、線を円筒に(中心の高さ・外径)、円は立上り管に。つなぎ目に球", () => {
+  const ents = [
+    { type: "LINE", x1: 0, y1: 0, x2: 10, y2: 0 },
+    { type: "LINE", x1: 10, y1: 0, x2: 10, y2: 10 },
+    { type: "CIRCLE", center_x: 10, center_y: 10, radius: 1 },
+  ];
+  const sc = buildScene([{ id: "p", kind: "pipe", ids: [0, 1, 2], z0: 2500, dia: 50, h: 800 }], ents, { scale: 100 });
+  assert.equal(sc.cyls.length, 3);
+  assert.ok(near(sc.cyls[0].r, 0.025));
+  assert.ok(near(sc.cyls[0].a[1], 2.5));
+  const riser = sc.cyls[2];
+  assert.ok(near(riser.b[1] - riser.a[1], 0.8));
+  assert.ok(near(sc.cyls[1].b[2], -1)); // 平面図のY(上向き)が、3DのZ(手前向き)の逆になる
+  assert.equal(sc.spheres.length, 4); // (0,0)(10,0)(10,10)と、立上りの上端(下端は(10,10)と同じ位置なので、1つにまとまる)
+});
+
+test("3D: 円弧は折れ線に分け、壁の円は円柱になる", () => {
+  const ents = [{ type: "ARC", center_x: 0, center_y: 0, radius: 10, start_angle: 0, end_angle: 90 }, { type: "CIRCLE", center_x: 0, center_y: 0, radius: 2 }];
+  const sc = buildScene([{ id: "w", kind: "wall", ids: [0, 1], z0: 0, h: 3000 }], ents, { scale: 100 });
+  assert.equal(sc.quads.length, 9);
+  assert.equal(sc.cyls.length, 1);
+  assert.ok(near(sc.cyls[0].r, 0.2));
+});
+
+test("3D: 部品の保存・読み込み(図形の数が違えば読まない)と、取り消し", () => {
+  const s = new PartStore();
+  const added = [];
+  s.onAdd = (p) => added.push(p.id);
+  const p = s.add({ kind: "wall", ids: [3, 4], z0: 0, h: 2700, label: "外壁" });
+  assert.equal(added.length, 1);
+  const saved = JSON.parse(JSON.stringify(s.toJSON(100)));
+  const t = new PartStore();
+  assert.deepEqual(t.load(saved, 99), { ok: false, reason: "図形の数が一致しません" });
+  assert.equal(t.list.length, 0);
+  assert.equal(t.load(saved, 100).count, 1);
+  assert.equal(t.list[0].id, p.id);
+  assert.equal(t.load({ baseCount: 100, items: [{ id: "x", kind: "bad", ids: [], z0: 0 }] }, 100).count, 0); // 不正な部品は捨てる
+  assert.ok(s.undo());
+  assert.equal(s.list.length, 0);
+  assert.match(describePart({ kind: "pipe", ids: [1], z0: 2500, dia: 50, label: "給水" }), /給水.*2500.*50/);
+});

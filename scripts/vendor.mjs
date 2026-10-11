@@ -53,4 +53,10 @@ copyFileSync(join(pkg, "LICENSE"), join(out, "LICENSE-ezjww"));
 const msalPkg = join(root, "node_modules", "@azure", "msal-browser");
 copyFileSync(join(msalPkg, "lib", "msal-browser.min.js"), join(out, "msal-browser.min.js"));
 copyFileSync(join(msalPkg, "LICENSE"), join(out, "LICENSE-msal-browser"));
-console.log("vendor/ に出力しました:", names.length, "個のAPI + msal-browser");
+// 3D表示(three.js)。importmapで "three" と "three/addons/" を指すため、そのまま置く。
+const threePkg = join(root, "node_modules", "three");
+copyFileSync(join(threePkg, "build", "three.module.min.js"), join(out, "three.module.min.js"));
+copyFileSync(join(threePkg, "build", "three.core.min.js"), join(out, "three.core.min.js"));
+copyFileSync(join(threePkg, "examples", "jsm", "controls", "OrbitControls.js"), join(out, "OrbitControls.js"));
+copyFileSync(join(threePkg, "LICENSE"), join(out, "LICENSE-three"));
+console.log("vendor/ に出力しました:", names.length, "個のAPI + msal-browser + three");

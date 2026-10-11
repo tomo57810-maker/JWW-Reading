@@ -29,6 +29,13 @@ for (let i = 0; i < 256; i++) {
   } else TABLE.push([GRAYS[i - 250], GRAYS[i - 250], GRAYS[i - 250]]);
 }
 
+/** ACI番号を [r,g,b](0〜255)にする。白(7)/黒(0)は背景に合わせて反転する。 */
+export function aciToRgb(aci, darkBackground) {
+  const n = Number.isInteger(aci) && aci >= 0 && aci < 256 ? aci : 7;
+  if (n === 7 || n === 0) return darkBackground ? [255, 255, 255] : [0, 0, 0];
+  return TABLE[n];
+}
+
 /** ACI番号をCSS色に変換する。白(7)/黒(0)は背景に合わせて反転する。 */
 export function aciToCss(aci, darkBackground) {
   const n = Number.isInteger(aci) && aci >= 0 && aci < 256 ? aci : 7;
