@@ -35,17 +35,29 @@
     <div class="tool-row" role="group" aria-label="ツール">
       <button class="tool" type="button" data-tool="move" aria-pressed="true">移動</button>
       <button class="tool" type="button" data-tool="obj" aria-pressed="false">図形</button>
-      <button class="tool" type="button" data-tool="select" aria-pressed="false">注釈選択</button>
-      <button class="tool" type="button" data-tool="dim" aria-pressed="false">寸法</button>
-      <button class="tool" type="button" data-tool="area" aria-pressed="false">面積</button>
-      <button class="tool" type="button" data-tool="route" aria-pressed="false">ルート</button>
+      <button class="tool" type="button" data-tool="select" aria-pressed="false">選択</button>
+      <button class="tool" type="button" data-group="measure" aria-pressed="false">測定</button>
       <button class="tool" type="button" data-tool="mark" aria-pressed="false">基準点</button>
       <button class="tool" type="button" data-tool="line" aria-pressed="false">線</button>
       <button class="tool" type="button" data-tool="rect" aria-pressed="false">矩形</button>
       <button class="tool" type="button" data-tool="circle" aria-pressed="false">円</button>
+      <button class="tool" type="button" data-tool="ctext" aria-pressed="false">文字</button>
       <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
       <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
       <button class="tool" type="button" data-tool="erase" aria-pressed="false">消す</button>
+    </div>
+    <div id="opts" class="tool-row sub" hidden>
+      <span id="m-opts" class="tool-row" role="group" aria-label="測定の種類" hidden>
+        <button class="btn small" type="button" data-tool="dim" aria-pressed="false">寸法</button>
+        <button class="btn small" type="button" data-tool="area" aria-pressed="false">面積</button>
+        <button class="btn small" type="button" data-tool="route" aria-pressed="false">ルート</button>
+      </span>
+      <span id="a-opts" class="tool-row" role="group" aria-label="属性" hidden>
+        <button id="t-pick" class="btn small" type="button" aria-pressed="false">属性取得</button>
+        <i id="attr-chip" class="chip" aria-hidden="true"></i>
+        <span id="attr-info" class="hint"></span>
+        <button id="t-attr-reset" class="btn small" type="button">既定に戻す</button>
+      </span>
     </div>
     <div class="tool-row sub">
       <label class="scale">縮尺 1/<input id="scale" type="number" inputmode="numeric" min="1" step="1" value="100" aria-label="縮尺の分母"></label>
@@ -60,7 +72,7 @@
       <button id="t-big" class="btn small" type="button" hidden>×1.25</button>
       <button id="t-small" class="btn small" type="button" hidden>×0.8</button>
       <button id="t-copy" class="btn small" type="button" hidden>複製</button>
-      <button id="t-edit" class="btn small" type="button" hidden>文字</button>
+      <button id="t-edit" class="btn small" type="button" hidden>書き換え</button>
       <button id="t-del" class="btn small" type="button" hidden>削除</button>
       <button id="t-done" class="btn small" type="button" hidden>完了</button>
       <button id="t-cancel" class="btn small" type="button" hidden>取消</button>
@@ -133,8 +145,9 @@
 
   <dialog id="txt" class="od">
     <form method="dialog" class="od-body">
-      <strong>コメント</strong>
+      <strong id="txt-title">コメント</strong>
       <textarea id="txt-input" class="search" rows="3" maxlength="200" placeholder="例: ここにバルブ追加" style="padding:8px 12px"></textarea>
+      <label class="opt" id="txt-size-row" hidden>文字の高さ <input id="txt-size" class="search" type="number" inputmode="decimal" step="any" min="0.1" value="3" style="width:6em"> mm(用紙の上の大きさ)</label>
       <div class="row">
         <button class="btn" value="cancel" formnovalidate>やめる</button>
         <button class="btn primary" value="ok">入れる</button>

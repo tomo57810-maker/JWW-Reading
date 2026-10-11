@@ -249,3 +249,5 @@ body {
 }
 .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.dirty { background: #fff3cd; border-color: #e0a800; color: #5c4a00; font-weight: 700; }
+.tool-row .tool-row { overflow: visible; flex: 1 1 auto; min-width: 0; }
+.chip { flex: none; width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--line); background: #888; }

@@ -2,26 +2,29 @@
 import { AnnotationStore } from "./annotations.js";
 import { drawAnnotations } from "./annotation-render.js";
 import { SnapIndex } from "./geometry.js";
-import { ToolController } from "./tools.js";
+import { ToolController, MEASURE_MODES, ATTR_MODES } from "./tools.js";
+import { aciToCss } from "./aci.js";
 import { EditStore } from "./edits.js";
 import { ObjectTool } from "./object-tool.js";
 import { makeJpegPdf } from "./pdf.js";
 
 const $ = (id) => document.getElementById(id);
+const el0 = (sel) => document.querySelector(sel);
 
 const HINTS = {
   move: "指で動かす・2本指で拡大",
   obj: "なぞって範囲選択/タップで1つ選ぶ。枠をドラッグで移動、角で拡大、○で回転",
   mark: "基準にする点をタップ→距離(実寸mm)を入力",
-  select: "注釈をタップで選び、ドラッグで移動",
-  dim: "2点をタップ(端点に吸着)",
-  area: "角を順にタップ→「完了」",
-  route: "経路を順にタップ→「完了」",
-  line: "始点と終点をタップ(端点・中点に吸着)",
+  select: "コメント・寸法などの書き込みをタップで選び、ドラッグで移動",
+  dim: "測定(寸法): 2点をタップ(端点に吸着)",
+  area: "測定(面積): 角を順にタップ→「完了」",
+  route: "測定(ルート): 経路を順にタップ→「完了」",
+  line: "始点と終点をタップ(端点・中点に吸着)。既存の線の線種は「属性取得」",
   rect: "対角の2点をタップ(「数値」で大きさ指定)",
   circle: "中心と、円周上の点をタップ(「数値」で半径指定)",
+  ctext: "文字を置きたい所をタップ。文字の大きさ・種類は「属性取得」で既存の文字から取れます",
   pen: "指でなぞって書く",
-  text: "置きたい所をタップ",
+  text: "コメント(図面とは別の書き込み)を置きたい所をタップ",
   erase: "消したい注釈・基準点をタップ(「戻す」で元に戻せます)",
 };
 
@@ -54,7 +57,9 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     off: $("off"), offTitle: $("off-title"), offHint: $("off-hint"), offDx: $("off-dx"), offDy: $("off-dy"), offDxLabel: $("off-dx-label"), offDyRow: $("off-dy-row"),
     add: $("t-add"), rl: $("t-rl"), rr: $("t-rr"), big: $("t-big"), small: $("t-small"),
     done: $("t-done"), cancel: $("t-cancel"), copy: $("t-copy"), edit: $("t-edit"), del: $("t-del"), undo: $("t-undo"), exportBtn: $("t-export"),
-    txt: $("txt"), txtInput: $("txt-input"), resume: $("resume"),
+    txt: $("txt"), txtInput: $("txt-input"), txtTitle: $("txt-title"), txtSizeRow: $("txt-size-row"), txtSize: $("txt-size"), resume: $("resume"),
+    opts: $("opts"), mOpts: $("m-opts"), aOpts: $("a-opts"), pick: $("t-pick"), attrInfo: $("attr-info"), attrChip: $("attr-chip"), attrReset: $("t-attr-reset"),
+    measure: el0("[data-group=measure]"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"), exAutosave: $("ex-autosave"), exDraft: $("ex-draft"),
   };
 
@@ -69,6 +74,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   let flashText = "";
   let flashTimer = 0;
   let afterTimer = 0;
+  let lastMeasure = "dim"; // 「測定」を押したとき、最後に使った測定の種類
   const history = []; // 「戻す」の順序: "ann"(注釈) / "edit"(図形の編集)
 
   el.exAutosave.checked = autosave;
@@ -169,6 +175,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
       return w ? { layer: w.key, color: w.color } : {};
     },
     askText: (at, initial) => askText(at, initial),
+    askDrawText: ({ initial, height }) => askDrawText(initial, height),
+    onNotice: (msg) => flash(msg),
     askOffset: (title, hint, opts) => askOffset(title, hint, opts),
     getTextRect: (id) => textRects.get(id) ?? null,
     onState: () => syncUi(),
@@ -210,14 +218,32 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     });
   }
 
-  function askText(at, initial = "") {
+  /** 文字入力のダイアログ。withSize のとき、文字の高さも聞く。やめたら null。 */
+  function openTextDialog({ title, initial = "", height = null }) {
     return new Promise((resolve) => {
+      el.txtTitle.textContent = title;
       el.txtInput.value = initial;
-      el.txt.addEventListener("close", () => resolve(el.txt.returnValue === "ok" ? el.txtInput.value : null), { once: true });
+      el.txtSizeRow.hidden = height === null;
+      if (height !== null) el.txtSize.value = String(+height.toFixed(2));
+      el.txt.addEventListener(
+        "close",
+        () => resolve(el.txt.returnValue === "ok" ? { text: el.txtInput.value, height: Number(el.txtSize.value) } : null),
+        { once: true }
+      );
       el.txt.returnValue = "cancel";
       el.txt.showModal();
       el.txtInput.focus();
     });
+  }
+
+  async function askText(at, initial = "") {
+    const r = await openTextDialog({ title: "コメント", initial });
+    return r ? r.text : null;
+  }
+
+  /** 図面に描く文字の入力(内容と高さ)。 */
+  function askDrawText(initial, height) {
+    return openTextDialog({ title: "文字を描き足す", initial, height });
   }
 
   /** 「戻す」: 作図中の点 → 直前の操作(注釈・図形の編集のうち、新しいほう)の順に戻す。 */
@@ -236,6 +262,19 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
 
   function syncUi() {
     for (const b of el.bar.querySelectorAll("[data-tool]")) b.setAttribute("aria-pressed", String(b.dataset.tool === tools.mode));
+    const measuring = MEASURE_MODES.includes(tools.mode);
+    const attrMode = ATTR_MODES.includes(tools.mode);
+    if (measuring) lastMeasure = tools.mode;
+    el.measure.setAttribute("aria-pressed", String(measuring));
+    el.mOpts.hidden = !measuring;
+    el.aOpts.hidden = !attrMode;
+    el.opts.hidden = !(measuring || attrMode);
+    if (attrMode) {
+      el.pick.setAttribute("aria-pressed", String(tools.picking));
+      el.attrInfo.textContent = tools.picking ? "取りたい既存の図形をタップ" : tools.attrSummary();
+      el.attrChip.style.background = aciToCss(tools.currentColor, viewer.dark);
+      el.attrReset.hidden = !(tools.lineAttr || tools.textAttr);
+    }
     const info = tools.draftInfo;
     const drafting = tools.drafting;
     el.done.hidden = !drafting;
@@ -280,6 +319,11 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   }
 
   for (const b of el.bar.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
+  el.measure.addEventListener("click", () => {
+    if (!MEASURE_MODES.includes(tools.mode)) tools.setMode(lastMeasure);
+  });
+  el.pick.addEventListener("click", () => tools.togglePick());
+  el.attrReset.addEventListener("click", () => tools.resetAttr());
   el.done.addEventListener("click", () => (tools.mode === "obj" ? objectTool.finish() : tools.finish()));
   el.cancel.addEventListener("click", () => (tools.mode === "obj" ? objectTool.cancelModes() : tools.cancel()));
   el.base.addEventListener("click", () => objectTool.beginBaseMove());

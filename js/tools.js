@@ -1,13 +1,19 @@
 // 注釈・測定のツール。画面の指(またはマウス)の動きを受け取り、注釈を作る。
 import { hitTest } from "./annotations.js";
 import { distance, polylineLength } from "./geometry.js";
+import { pickEntity } from "./edits.js";
+import { lineTypeLabel } from "./drawing.js";
+import { DEFAULT_TEXT_ATTR, makeTextEntities } from "./text.js";
 
 const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
-export const MODES = ["move", "obj", "select", "dim", "area", "route", "mark", "line", "rect", "circle", "pen", "text", "erase"];
+export const MODES = ["move", "obj", "select", "dim", "area", "route", "mark", "line", "rect", "circle", "ctext", "pen", "text", "erase"];
+export const MEASURE_MODES = ["dim", "area", "route"]; // 「測定」にまとめるモード
 const SHAPE_MODES = ["line", "rect", "circle"]; // 図面に図形(線・矩形・円)を描き足すモード
+export const ATTR_MODES = [...SHAPE_MODES, "ctext"]; // 「属性取得」ができるモード(ctext=図面に文字を描き足す)
+const LINE_KINDS = ["LINE", "ARC", "CIRCLE"]; // 線の属性を取れる図形
 
 export class ToolController {
   /**
@@ -20,14 +26,18 @@ export class ToolController {
    * @param {(title: string, hint?: string) => Promise<{dx:number, dy:number} | null>} [deps.askOffset] 横・縦の距離(実寸mm)を入力してもらう
    * @param {() => {layer?: string, color?: number}} [deps.getDrawStyle] 描き足す図形(線・矩形・円)のレイヤと色
    * @param {(id: string) => {x:number,y:number,w:number,h:number} | null} [deps.getTextRect] 画面に描いたコメントの四角(画面px)。選ぶときの当たり判定に使う
+   * @param {(opts: {initial?: string, height: number}) => Promise<{text: string, height: number} | null>} [deps.askDrawText] 図面に描く文字(内容と高さ)を入力してもらう
+   * @param {(message: string) => void} [deps.onNotice] 利用者に一言伝えたいとき(属性を取得した、など)
    * @param {() => void} [deps.onState] モードや作図中の状態が変わったとき
    */
-  constructor({ viewer, store, getScale, getSnap, askText, askOffset = async () => null, getTextRect = () => null, objectTool = null, getDrawStyle = () => ({}), onState = () => {} }) {
+  constructor({ viewer, store, getScale, getSnap, askText, askDrawText = null, askOffset = async () => null, getTextRect = () => null, objectTool = null, getDrawStyle = () => ({}), onNotice = () => {}, onState = () => {} }) {
     this.viewer = viewer;
     this.store = store;
     this.getScale = getScale;
     this.getSnap = getSnap;
     this.askText = askText;
+    this.askDrawText = askDrawText;
+    this.onNotice = onNotice;
     this.askOffset = askOffset;
     this.getTextRect = getTextRect;
     this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「図形」モード)
@@ -40,6 +50,9 @@ export class ToolController {
     this.downAt = null;
     this.selectedId = null; // 選んでいる注釈
     this.drag = null; // 移動中: { item, start, orig, moved }
+    this.lineAttr = null; // 属性取得した線の属性 { layer, color, line_type, line_weight }。nullなら既定(書込レイヤ・実線)
+    this.textAttr = null; // 属性取得した文字の属性 { layer, color, height, width_factor, style }。nullなら既定
+    this.picking = false; // 「属性取得」の待ち(次にタップした図形から属性を取る)
   }
 
   get selected() {
@@ -50,6 +63,7 @@ export class ToolController {
     if (!MODES.includes(mode)) return;
     this.cancel();
     this.selectedId = null;
+    this.picking = false;
     if (this.mode === "obj") this.objectTool?.clearSelection(); // 図形モードを出るとき、選択と途中の操作を解除する
     this.mode = mode;
     this.viewer.tool = mode === "move" ? null : mode === "obj" ? this.objectTool : this;
@@ -96,10 +110,76 @@ export class ToolController {
     this.viewer.redraw();
   }
 
-  /** 描き足す図形のもとになる属性(レイヤ・色・線種)。 */
+  /** 描き足す線のもとになる属性(レイヤ・色・線種・太さ)。属性取得していれば、その属性。 */
   #shapeBase() {
+    const a = this.lineAttr;
+    if (a) return { layer: a.layer, color: a.color, line_type: a.line_type, line_weight: a.line_weight };
     const st = this.getDrawStyle() ?? {};
     return { layer: st.layer ?? "0", color: st.color ?? 7, line_type: "CONTINUOUS", line_weight: -3 };
+  }
+
+  /** 描き足す文字の属性。属性取得していれば、その属性。なければ書込レイヤ・既定の大きさ。 */
+  get textStyle() {
+    if (this.textAttr) return { ...this.textAttr };
+    const st = this.getDrawStyle() ?? {};
+    return { layer: st.layer ?? "0", color: st.color ?? 7, ...DEFAULT_TEXT_ATTR };
+  }
+
+  /** 「属性取得」を始める/やめる(切り替え)。 */
+  togglePick() {
+    if (!ATTR_MODES.includes(this.mode)) return;
+    this.picking = !this.picking;
+    this.onState();
+  }
+
+  /** 取得した属性を捨てて、既定(書込レイヤ・実線・標準の文字)に戻す。 */
+  resetAttr() {
+    this.lineAttr = null;
+    this.textAttr = null;
+    this.picking = false;
+    this.onState();
+  }
+
+  /** いまの属性を、画面に出す短い文章にする。 */
+  attrSummary() {
+    if (this.mode === "ctext") {
+      const t = this.textStyle;
+      return `高さ${+t.height.toFixed(2)}mm 幅${+t.width_factor.toFixed(2)} 文字種${t.style}`;
+    }
+    const a = this.#shapeBase();
+    const w = a.line_weight > 0 ? `${a.line_weight / 100}mm` : "既定";
+    return `${lineTypeLabel(a.line_type)} 色${a.color} 太さ${w}`;
+  }
+
+  get currentColor() {
+    return this.mode === "ctext" ? this.textStyle.color : this.#shapeBase().color;
+  }
+
+  /** タップした図形から属性を取る。取れたら true。 */
+  #pickAttr(point) {
+    const entities = this.objectTool?.edits?.entities ?? [];
+    const hidden = this.viewer.hiddenLayers;
+    const wantText = this.mode === "ctext";
+    const ok = (e) => !hidden?.has(e.layer) && (wantText ? e.type === "TEXT" : LINE_KINDS.includes(e.type));
+    const tol = (SNAP_PX * 1.2) / this.viewer.view.s;
+    const i = pickEntity(entities, point.world.x, point.world.y, tol, ok);
+    if (i < 0) {
+      this.onNotice(wantText ? "文字が見つかりません。取りたい文字をタップしてください" : "線が見つかりません。取りたい線をタップしてください");
+      return false;
+    }
+    const e = entities[i];
+    if (wantText) {
+      this.textAttr = {
+        layer: e.layer, color: e.color ?? 7, style: e.style ?? DEFAULT_TEXT_ATTR.style,
+        height: e.height > 0 ? e.height : DEFAULT_TEXT_ATTR.height,
+        width_factor: e.width_factor > 0 ? e.width_factor : DEFAULT_TEXT_ATTR.width_factor,
+      };
+    } else {
+      this.lineAttr = { layer: e.layer, color: e.color ?? 7, line_type: e.line_type ?? "CONTINUOUS", line_weight: e.line_weight ?? -3 };
+    }
+    this.picking = false;
+    this.onNotice(`属性を取得しました(${this.attrSummary()})`);
+    return true;
   }
 
   /** 2点から、線・矩形(4本の線)・円を作って、図面に描き足す。 */
@@ -285,6 +365,7 @@ export class ToolController {
       case "line":
       case "rect":
       case "circle":
+      case "ctext":
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
         break;
@@ -320,6 +401,7 @@ export class ToolController {
       case "line":
       case "rect":
       case "circle":
+      case "ctext":
         // 指を動かしている間も、吸着の位置と途中の長さを見せる(離した位置が採用される)
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
@@ -332,6 +414,14 @@ export class ToolController {
   async up(point) {
     const moved = this.downAt ? Math.hypot(point.sx - this.downAt.sx, point.sy - this.downAt.sy) : 0;
     this.downAt = null;
+    if (this.picking && ATTR_MODES.includes(this.mode)) {
+      // 属性取得の待ち: 図形をタップしたら属性を取る(線や文字は、置かない)
+      this.snap = null;
+      if (moved <= TAP_MOVE_PX * 2) this.#pickAttr(point);
+      this.onState();
+      this.viewer.redraw();
+      return;
+    }
     switch (this.mode) {
       case "select":
         this.#endDrag();
@@ -375,6 +465,19 @@ export class ToolController {
         this.snap = null;
         this.draft.cursor = null;
         if (pts.length === 2) this.#commitShape(pts[0], pts[1]);
+        this.onState();
+        break;
+      }
+      case "ctext": {
+        if (moved > TAP_MOVE_PX) break;
+        const at = this.#snapPoint(point);
+        const cur = this.textStyle;
+        const r = this.askDrawText ? await this.askDrawText({ initial: "", height: cur.height }) : { text: await this.askText(at, ""), height: cur.height };
+        this.snap = null;
+        if (!r?.text?.trim()) break;
+        const attr = { ...cur, height: r.height > 0 ? r.height : cur.height };
+        if (this.textAttr || attr.height !== cur.height) this.textAttr = attr; // 入力した高さは、次の文字にも引き継ぐ
+        this.objectTool?.addEntities(makeTextEntities(r.text, at, attr));
         this.onState();
         break;
       }

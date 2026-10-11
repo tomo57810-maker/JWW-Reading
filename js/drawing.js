@@ -15,6 +15,19 @@ export function dashFor(lineType) {
   return DASHES[lineType] ?? null;
 }
 
+const LINE_TYPE_NAMES = {
+  CONTINUOUS: "実線", JWW_DASHED1: "点線1", JWW_DASHED2: "点線2", JWW_DASHED3: "点線3",
+  JWW_DASHDOT1: "一点鎖線1", JWW_DASHDOT2: "一点鎖線2", JWW_DIVIDE1: "二点鎖線1", JWW_DIVIDE2: "二点鎖線2",
+  JWW_CONSTRUCTION: "補助線", BYLAYER: "実線",
+};
+
+/** 線種名を、利用者向けの呼び名にする(例: JWW_DASHED1 → 点線1、SXF_USER_21 → ユーザー線種21)。 */
+export function lineTypeLabel(lineType) {
+  if (LINE_TYPE_NAMES[lineType]) return LINE_TYPE_NAMES[lineType];
+  const m = /^SXF_USER_(\d+)$/.exec(lineType ?? "");
+  return m ? `ユーザー線種${m[1]}` : lineType || "実線";
+}
+
 /** 図形が占める範囲。図形がなければnull。 */
 export function boundsOf(entities) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

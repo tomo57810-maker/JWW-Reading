@@ -107,3 +107,20 @@ test("共有されたのがリンク(URL)なら、そのことを案内する", 
   assert.match(explainNotDrawing(url), /リンク/);
   assert.equal(explainNotDrawing(new TextEncoder().encode("JwwData.")), null);
 });
+
+import { makeTextEntities, textWidth } from "../js/text.js";
+import { lineTypeLabel } from "../js/drawing.js";
+
+test("文字の幅: 全角は高さ×幅率、半角はその半分(実ファイルの「※B」「改修後」と同じ計算)", () => {
+  assert.ok(Math.abs(textWidth("※B", 3, 0.9) - 4.05) < 1e-9);
+  assert.ok(Math.abs(textWidth("改修後", 4.5, 1.28) - 17.28) < 1e-9);
+  const [t] = makeTextEntities("VP20", { x: 10, y: 5 }, { layer: "L", color: 3, height: 3, width_factor: 0.9, style: "STANDARD" }, 90);
+  assert.equal(t.type, "TEXT");
+  assert.ok(Math.abs(t.end_x - 10) < 1e-9 && Math.abs(t.end_y - (5 + 4 * 1.35)) < 1e-9); // 90度なら、上向きに伸びる
+});
+
+test("線種の呼び名", () => {
+  assert.equal(lineTypeLabel("JWW_DASHED1"), "点線1");
+  assert.equal(lineTypeLabel("SXF_USER_21"), "ユーザー線種21");
+  assert.equal(lineTypeLabel("CONTINUOUS"), "実線");
+});
