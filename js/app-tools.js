@@ -7,6 +7,8 @@ import { aciToCss } from "./aci.js";
 import { EditStore } from "./edits.js";
 import { ObjectTool } from "./object-tool.js";
 import { makeJpegPdf } from "./pdf.js";
+import { buildDxf } from "./dxf-export.js";
+import { readDxfText } from "../vendor/ezjww.mjs";
 
 const $ = (id) => document.getElementById(id);
 const el0 = (sel) => document.querySelector(sel);
@@ -67,6 +69,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   let storeKey = null; // 図面ごとの保存先(中身のSHA-256)。保存した状態=storeKey、下書き=draft:storeKey
   let snapIndex = null;
   let edits = null; // 図面の図形の編集記録(図面を開くたびに作る)
+  let sourceBytes = null; // 開いている図面の原本(DXFへの書き出しに使う)
   let unloadedEdits = null; // 読み込めなかった保存済みの編集(上書きして失わないよう、そのまま持ち続ける)
   let savedCore = coreOf(null); // 最後に保存した状態の核。いまの状態と違えば「未保存」
   let loading = false; // 図面を開く途中(読み込みによる変化は、変更として扱わない)
@@ -430,6 +433,20 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     }
   }
 
+  async function exportDxf() {
+    if (!edits || !sourceBytes) return;
+    el.exMsg.textContent = "DXFを作っています…";
+    await new Promise((r) => setTimeout(r, 30)); // 表示を更新させる
+    try {
+      const { text, count, skipped } = buildDxf(readDxfText(sourceBytes), edits.entities);
+      deliver(new Blob([text], { type: "application/dxf" }), `${baseName()}${edits.ops.length ? "_編集済" : ""}.dxf`);
+      el.exMsg.textContent = `DXFを保存しました(図形 ${count.toLocaleString()}個、${(text.length / 1024 / 1024).toFixed(1)} MB)` + (skipped ? `。書き出せない図形が${skipped}個ありました` : "");
+    } catch (err) {
+      el.exMsg.textContent = `DXFを作れませんでした: ${err?.message ?? err}`;
+    }
+  }
+
+  $("ex-dxf").addEventListener("click", exportDxf);
   $("ex-pdf").addEventListener("click", () => exportPdf(4000));
   $("ex-pdf-hi").addEventListener("click", () => exportPdf(7000));
   $("ex-json").addEventListener("click", () => {
@@ -538,6 +555,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
         tools.setMode("move");
         objectTool.clearSelection();
         storeKey = key;
+        sourceBytes = bytes;
         snapIndex = new SnapIndex(model.entities);
         let snapTimer = 0;
         edits = new EditStore(model.entities, (e) => {

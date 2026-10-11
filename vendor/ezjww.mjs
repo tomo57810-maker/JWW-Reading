@@ -652,4 +652,9 @@ export function readDrawing(bytes, { explodeInserts = true, maxBlockNesting = 32
     return readDxfDocument(bytes, explodeInserts, maxBlockNesting, "paper_millimeters", 1);
 }
 
+/** JWW/JWCをDXFの文字列(AC1015)に変換する。図形はブロックを展開した形。 */
+export function readDxfText(bytes) {
+    return readDxfString(bytes, true, 32, "paper_millimeters", "AC1015", 1);
+}
+
 export { detectFileFormat, imageReference, imageReferenceContent, isJwcFile, isJwwFile, newJwwDocument, readCadDocument, readDocument, readDxfDocument, readDxfString, readHeader, readJwcDocument, readJwcHeader, toJwwBytes, toWriteDocument };

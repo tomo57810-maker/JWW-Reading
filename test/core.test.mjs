@@ -124,3 +124,51 @@ test("線種の呼び名", () => {
   assert.equal(lineTypeLabel("SXF_USER_21"), "ユーザー線種21");
   assert.equal(lineTypeLabel("CONTINUOUS"), "実線");
 });
+
+import { buildDxf, dxfText } from "../js/dxf-export.js";
+
+const BASE_DXF = [
+  "  0", "SECTION", "  2", "HEADER", "  9", "$ACADVER", "  1", "AC1015", "  0", "ENDSEC",
+  "  0", "SECTION", "  2", "TABLES",
+  "  0", "TABLE", "  2", "LTYPE", "  0", "LTYPE", "  5", "6", "  2", "CONTINUOUS", "  0", "LTYPE", "  5", "7", "  2", "JWW_DASHED1", "  0", "ENDTAB",
+  "  0", "TABLE", "  2", "LAYER", "  0", "LAYER", "  5", "15", "  2", "0", "  0", "LAYER", "  5", "16", "  2", "\\U+7D66\\U+6C34", "  0", "ENDTAB",
+  "  0", "TABLE", "  2", "STYLE", "  0", "STYLE", "  5", "20", "  2", "STANDARD", "  0", "ENDTAB",
+  "  0", "ENDSEC",
+  "  0", "SECTION", "  2", "ENTITIES", "  0", "LINE", "  5", "99", "  8", "0", "  0", "ENDSEC",
+  "  0", "SECTION", "  2", "OBJECTS", "  0", "DICTIONARY", "  5", "A4E7", "  0", "ENDSEC", "  0", "EOF", "",
+].join("\n");
+
+test("DXF: 文字は\\U+XXXXに直す。ASCIIはそのまま", () => {
+  assert.equal(dxfText("VP20 給水"), "VP20 \\U+7D66\\U+6C34");
+});
+
+test("DXF書き出し: 図形の部分だけを編集後の図形に差し替え、表(レイヤ・線種)は残す。消した図形は書かない", () => {
+  const ents = [
+    { type: "LINE", layer: "給水", color: 3, line_type: "JWW_DASHED1", x1: 0, y1: 0, x2: 10, y2: 5 },
+    null, // 消した図形
+    { type: "CIRCLE", layer: "未登録のレイヤ", color: 1, line_type: "未登録の線種", center_x: 1, center_y: 2, radius: 3 },
+    { type: "TEXT", layer: "0", color: 7, line_type: "CONTINUOUS", x: 5, y: 6, height: 3, width_factor: 0.9, rotation: 90, content: "給水管", style: "STANDARD" },
+    { type: "ARC", layer: "0", color: 7, line_type: "CONTINUOUS", center_x: 0, center_y: 0, radius: 2, start_angle: 0, end_angle: 90 },
+    { type: "SOLID", layer: "0", color: 7, line_type: "CONTINUOUS", x1: 0, y1: 0, x2: 1, y2: 0, x3: 0, y3: 1, x4: 0, y4: 1 },
+    { type: "TEXT", layer: "0", content: "", height: 3 }, // 空の文字は書かない(数には入れない)
+    { type: "INSERT", layer: "0" }, // 扱えない種類
+  ];
+  const { text, count, skipped } = buildDxf(BASE_DXF, ents);
+  assert.equal(count, 5);
+  assert.equal(skipped, 1);
+  assert.ok(text.includes("JWW_DASHED1") && text.includes("\\U+7D66\\U+6C34")); // 表は残る
+  assert.ok(text.includes("  0\nOBJECTS\n") || text.includes("  2\nOBJECTS\n")); // 図形の後ろも残る
+  assert.ok(!text.includes("  5\n99\n")); // 原本の図形(ダミー)は差し替わっている
+  const body = text.slice(text.indexOf("  2\nENTITIES\n"), text.indexOf("  2\nOBJECTS\n"));
+  assert.ok(body.includes("  8\n\\U+7D66\\U+6C34\n 62\n3\n  6\nJWW_DASHED1")); // 線のレイヤ・色・線種
+  assert.ok(body.includes("  8\n0\n 62\n1\n  6\nCONTINUOUS")); // 未登録のレイヤ・線種は、"0"・実線に
+  assert.ok(body.includes("  1\n\\U+7D66\\U+6C34\\U+7BA1")); // 文字
+  assert.ok(body.includes(" 50\n90.000000000")); // 回転
+  const handles = [...body.matchAll(/\n {2}5\n([0-9A-F]+)\n/g)].map((m) => m[1]);
+  assert.equal(new Set(handles).size, handles.length); // ハンドルは重複しない
+  assert.ok(handles.every((h) => parseInt(h, 16) > 0x20)); // 表のハンドルと重ならない
+});
+
+test("DXF書き出し: 原本のDXFに図形の部分がなければ、わかりやすい例外", () => {
+  assert.throws(() => buildDxf("  0\nEOF\n", []), /図形の部分/);
+});
