@@ -2,7 +2,7 @@
 import { AnnotationStore } from "./annotations.js";
 import { drawAnnotations } from "./annotation-render.js";
 import { SnapIndex } from "./geometry.js";
-import { ToolController, MEASURE_MODES, ATTR_MODES } from "./tools.js";
+import { ToolController, MEASURE_MODES, SHAPE_MODES, ATTR_MODES } from "./tools.js";
 import { aciToCss } from "./aci.js";
 import { EditStore } from "./edits.js";
 import { ObjectTool } from "./object-tool.js";
@@ -13,15 +13,15 @@ const el0 = (sel) => document.querySelector(sel);
 
 const HINTS = {
   move: "指で動かす・2本指で拡大",
-  obj: "なぞって範囲選択/タップで1つ選ぶ。枠をドラッグで移動、角で拡大、○で回転",
   mark: "基準にする点をタップ→距離(実寸mm)を入力",
-  select: "コメント・寸法などの書き込みをタップで選び、ドラッグで移動",
+  select: "タップで1つ選ぶ/なぞって範囲選択。選んだら、ドラッグで移動、角で拡大、○で回転。コメントなども選べます",
   dim: "測定(寸法): 2点をタップ(端点に吸着)",
   area: "測定(面積): 角を順にタップ→「完了」",
   route: "測定(ルート): 経路を順にタップ→「完了」",
-  line: "始点と終点をタップ(端点・中点に吸着)。既存の線の線種は「属性取得」",
-  rect: "対角の2点をタップ(「数値」で大きさ指定)",
-  circle: "中心と、円周上の点をタップ(「数値」で半径指定)",
+  line: "図形(線): 始点と終点をタップ(端点・中点に吸着)。既存の線の線種は「属性取得」",
+  arrow: "図形(矢印): 根元と、先端(矢印の頭の側)をタップ",
+  rect: "図形(矩形): 対角の2点をタップ(「数値」で大きさ指定)",
+  circle: "図形(円): 中心と、円周上の点をタップ(「数値」で半径指定)",
   ctext: "文字を置きたい所をタップ。文字の大きさ・種類は「属性取得」で既存の文字から取れます",
   pen: "指でなぞって書く",
   text: "コメント(図面とは別の書き込み)を置きたい所をタップ",
@@ -59,7 +59,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     done: $("t-done"), cancel: $("t-cancel"), copy: $("t-copy"), edit: $("t-edit"), del: $("t-del"), undo: $("t-undo"), exportBtn: $("t-export"),
     txt: $("txt"), txtInput: $("txt-input"), txtTitle: $("txt-title"), txtSizeRow: $("txt-size-row"), txtSize: $("txt-size"), resume: $("resume"),
     opts: $("opts"), mOpts: $("m-opts"), aOpts: $("a-opts"), pick: $("t-pick"), attrInfo: $("attr-info"), attrChip: $("attr-chip"), attrReset: $("t-attr-reset"),
-    measure: el0("[data-group=measure]"),
+    groups: [...document.querySelectorAll("[data-group]")],
+    sOpts: $("s-opts"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"), exAutosave: $("ex-autosave"), exDraft: $("ex-draft"),
   };
 
@@ -74,7 +75,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   let flashText = "";
   let flashTimer = 0;
   let afterTimer = 0;
-  let lastMeasure = "dim"; // 「測定」を押したとき、最後に使った測定の種類
+  const GROUPS = { measure: MEASURE_MODES, shape: SHAPE_MODES }; // 工具の「まとめ」ボタンと、その中のモード
+  const lastGroup = { measure: "dim", shape: "line" }; // まとめボタンを押したとき、最後に使った種類
   const history = []; // 「戻す」の順序: "ann"(注釈) / "edit"(図形の編集)
 
   el.exAutosave.checked = autosave;
@@ -184,9 +186,9 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
 
   viewer.overlay = (frame) => {
     if (!frame.forExport) textRects.clear();
-    const snap = tools.mode === "obj" ? objectTool.snapHit : tools.snap;
+    const snap = tools.mode === "select" ? objectTool.snapHit : tools.snap;
     drawAnnotations(frame, { items: store.items, draft: tools.draft, snap, selectedId: tools.selectedId, rects: textRects });
-    if (tools.mode === "obj") objectTool.drawOverlay(frame);
+    if (tools.mode === "select") objectTool.drawOverlay(frame);
   };
 
   /**
@@ -263,10 +265,13 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   function syncUi() {
     for (const b of el.bar.querySelectorAll("[data-tool]")) b.setAttribute("aria-pressed", String(b.dataset.tool === tools.mode));
     const measuring = MEASURE_MODES.includes(tools.mode);
+    const shaping = SHAPE_MODES.includes(tools.mode);
     const attrMode = ATTR_MODES.includes(tools.mode);
-    if (measuring) lastMeasure = tools.mode;
-    el.measure.setAttribute("aria-pressed", String(measuring));
+    if (measuring) lastGroup.measure = tools.mode;
+    if (shaping) lastGroup.shape = tools.mode;
+    for (const g of el.groups) g.setAttribute("aria-pressed", String(GROUPS[g.dataset.group].includes(tools.mode)));
     el.mOpts.hidden = !measuring;
+    el.sOpts.hidden = !shaping;
     el.aOpts.hidden = !attrMode;
     el.opts.hidden = !(measuring || attrMode);
     if (attrMode) {
@@ -289,8 +294,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     el.copy.hidden = !sel;
     el.del.hidden = !sel;
     el.edit.hidden = sel?.kind !== "text";
-    if (sel) el.hint.textContent = flashText || "選択中: ドラッグで移動";
-    const obj = tools.mode === "obj";
+    if (sel) el.hint.textContent = flashText || "選択中: ドラッグで移動、「複製」「削除」";
+    const obj = tools.mode === "select";
     const objSel = obj && objectTool.hasSelection;
     const busy = obj && (objectTool.baseMove || objectTool.stretch); // 基点移動・伸縮の途中
     el.add.hidden = !obj || Boolean(busy);
@@ -319,21 +324,25 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   }
 
   for (const b of el.bar.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
-  el.measure.addEventListener("click", () => {
-    if (!MEASURE_MODES.includes(tools.mode)) tools.setMode(lastMeasure);
-  });
+  for (const g of el.groups) {
+    g.addEventListener("click", () => {
+      const name = g.dataset.group;
+      if (!GROUPS[name].includes(tools.mode)) tools.setMode(lastGroup[name]);
+    });
+  }
   el.pick.addEventListener("click", () => tools.togglePick());
   el.attrReset.addEventListener("click", () => tools.resetAttr());
-  el.done.addEventListener("click", () => (tools.mode === "obj" ? objectTool.finish() : tools.finish()));
-  el.cancel.addEventListener("click", () => (tools.mode === "obj" ? objectTool.cancelModes() : tools.cancel()));
+  const objBusy = () => Boolean(objectTool.baseMove || objectTool.stretch);
+  el.done.addEventListener("click", () => (objBusy() ? objectTool.finish() : tools.finish()));
+  el.cancel.addEventListener("click", () => (objBusy() ? objectTool.cancelModes() : tools.cancel()));
   el.base.addEventListener("click", () => objectTool.beginBaseMove());
   el.stretch.addEventListener("click", () => objectTool.beginStretch());
   el.num.addEventListener("click", () => objectTool.askStretchOffset());
   el.shapeNum.addEventListener("click", () => tools.askShapeNumbers());
   el.undo.addEventListener("click", undoLast);
   el.save.addEventListener("click", () => commitSave());
-  el.copy.addEventListener("click", () => (tools.mode === "obj" ? objectTool.copy() : tools.copySelected()));
-  el.del.addEventListener("click", () => (tools.mode === "obj" ? objectTool.delete() : tools.deleteSelected()));
+  el.copy.addEventListener("click", () => (objectTool.hasSelection ? objectTool.copy() : tools.copySelected()));
+  el.del.addEventListener("click", () => (objectTool.hasSelection ? objectTool.delete() : tools.deleteSelected()));
   el.add.addEventListener("click", () => {
     objectTool.additive = !objectTool.additive;
     syncUi();

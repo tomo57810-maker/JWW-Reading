@@ -146,6 +146,12 @@ export class ObjectTool {
     return null;
   }
 
+  /** 選択中の図形の、角(拡大)や○(回転)の取っ手に触れているか。枠の中(移動)は含まない。 */
+  hitsCornerHandle(point) {
+    const h = this.hasSelection ? this.#hitHandle(point) : null;
+    return Boolean(h && h.kind !== "move");
+  }
+
   down(point) {
     if (this.baseMove) {
       this.drag = { kind: "basetap", at: point };

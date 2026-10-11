@@ -9,9 +9,11 @@ const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
-export const MODES = ["move", "obj", "select", "dim", "area", "route", "mark", "line", "rect", "circle", "ctext", "pen", "text", "erase"];
+export const MODES = ["move", "select", "dim", "area", "route", "mark", "line", "rect", "circle", "arrow", "ctext", "pen", "text", "erase"];
 export const MEASURE_MODES = ["dim", "area", "route"]; // 「測定」にまとめるモード
-const SHAPE_MODES = ["line", "rect", "circle"]; // 図面に図形(線・矩形・円)を描き足すモード
+export const SHAPE_MODES = ["line", "rect", "circle", "arrow"]; // 図面に図形(線・矩形・円・矢印)を描き足すモード
+const ARROW_HEAD_MM = 3; // 矢印の頭の長さ(用紙mm)。短い矢印では、全長の半分まで
+const ARROW_HEAD_WIDTH = 0.3; // 矢印の頭の半幅(頭の長さに対する比)
 export const ATTR_MODES = [...SHAPE_MODES, "ctext"]; // 「属性取得」ができるモード(ctext=図面に文字を描き足す)
 const LINE_KINDS = ["LINE", "ARC", "CIRCLE"]; // 線の属性を取れる図形
 
@@ -40,7 +42,8 @@ export class ToolController {
     this.onNotice = onNotice;
     this.askOffset = askOffset;
     this.getTextRect = getTextRect;
-    this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「図形」モード)
+    this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「選択」モードで、注釈より下の図形を扱う)
+    this.sub = null; // 選択モードで、いまの指の操作を預けているツール(図面の図形の操作中だけ)
     this.getDrawStyle = getDrawStyle; // 描き足す図形の、レイヤ・色など
     this.onState = onState;
     this.mode = "move";
@@ -64,9 +67,10 @@ export class ToolController {
     this.cancel();
     this.selectedId = null;
     this.picking = false;
-    if (this.mode === "obj") this.objectTool?.clearSelection(); // 図形モードを出るとき、選択と途中の操作を解除する
+    this.sub = null;
+    if (this.mode === "select") this.objectTool?.clearSelection(); // 選択モードを出るとき、選択と途中の操作を解除する
     this.mode = mode;
-    this.viewer.tool = mode === "move" ? null : mode === "obj" ? this.objectTool : this;
+    this.viewer.tool = mode === "move" ? null : this;
     this.viewer.toolPointerId = null;
     this.viewer.toolPointerId = null;
     this.snap = null;
@@ -89,6 +93,10 @@ export class ToolController {
 
   /** 2本目の指が触れたとき: 書きかけの赤ペンの線や、注釈の移動だけをやめる。点を置いた作図中の線は残す。 */
   abort() {
+    if (this.sub) {
+      this.sub.abort();
+      this.sub = null;
+    }
     if (this.pen) {
       this.pen = null;
       this.draft = null;
@@ -188,6 +196,18 @@ export class ToolController {
     let entities;
     if (this.mode === "line") {
       entities = [{ type: "LINE", ...base, x1: a.x, y1: a.y, x2: b.x, y2: b.y }];
+    } else if (this.mode === "arrow") {
+      const len = distance(a, b);
+      if (len <= 0) return;
+      const head = Math.min(ARROW_HEAD_MM, len / 2);
+      const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+      const bx = b.x - ux * head, by = b.y - uy * head; // 頭の根元
+      const hw = head * ARROW_HEAD_WIDTH;
+      entities = [
+        { type: "LINE", ...base, x1: a.x, y1: a.y, x2: bx, y2: by },
+        // 頭は塗りつぶしの三角形(SOLIDは、頂点1・2・4・3の順に結ぶ。3と4を同じ点にして三角形にする)
+        { type: "SOLID", ...base, x1: b.x, y1: b.y, x2: bx - uy * hw, y2: by + ux * hw, x3: bx + uy * hw, y3: by - ux * hw, x4: bx + uy * hw, y4: by - ux * hw },
+      ];
     } else if (this.mode === "rect") {
       const [x0, x1] = [a.x, b.x];
       const [y0, y1] = [a.y, b.y];
@@ -218,7 +238,7 @@ export class ToolController {
       if (!r || !(r.dx > 0)) return;
       this.#commitShape(a, { x: a.x + r.dx / scale, y: a.y });
     } else {
-      const title = d.item.kind === "rect" ? "矩形の大きさ(実寸mm)" : "線の長さ(実寸mm)";
+      const title = d.item.kind === "rect" ? "矩形の大きさ(実寸mm)" : d.item.kind === "arrow" ? "矢印の長さ(実寸mm)" : "線の長さ(実寸mm)";
       const r = await this.askOffset(title, "1点目から、横(→が+)・縦(↑が+)に何mmですか。例: 流しなら 横1200・縦600。");
       if (!r) return;
       this.#commitShape(a, { x: a.x + r.dx / scale, y: a.y + r.dy / scale });
@@ -243,8 +263,7 @@ export class ToolController {
   /** 作図中なら、最後の点を取り消す。作図中でなければ、直前の操作(図形モードでは図形の編集、それ以外は注釈)を取り消す。 */
   undo() {
     if (this.undoDraft()) return;
-    if (this.mode === "obj") {
-      this.objectTool?.undo();
+    if (this.mode === "select" && this.objectTool?.undo()) {
       this.onState();
       return;
     }
@@ -275,6 +294,7 @@ export class ToolController {
   }
 
   hover(point) {
+    if (this.mode === "select") return;
     this.snap = this.#nearEndpoint(point);
     if (this.draft) this.draft.cursor = this.snap ?? point.world;
   }
@@ -345,7 +365,19 @@ export class ToolController {
     this.downAt = point;
     switch (this.mode) {
       case "select": {
-        const hit = this.#pick(point);
+        const ot = this.objectTool;
+        // 基点移動・伸縮の途中や、選択中の図形の角・○の取っ手は、図面の図形の操作。それ以外は、まず注釈(コメント・基準点など)を探す
+        const forObject = ot && (ot.baseMove || ot.stretch || (ot.hasSelection && ot.hitsCornerHandle(point)));
+        const hit = forObject ? null : this.#pick(point);
+        if (ot && !hit) {
+          this.selectedId = null;
+          this.drag = null;
+          this.sub = ot;
+          ot.down(point);
+          this.onState();
+          break;
+        }
+        if (ot?.hasSelection) ot.clearSelection();
         this.selectedId = hit?.id ?? null;
         this.drag = hit
           ? { item: hit, start: point.world, orig: hit.at ? { at: { ...hit.at } } : { points: hit.points.map((p) => ({ ...p })) }, moved: false }
@@ -365,6 +397,7 @@ export class ToolController {
       case "line":
       case "rect":
       case "circle":
+      case "arrow":
       case "ctext":
         this.snap = this.#nearEndpoint(point);
         if (this.draft) this.draft.cursor = this.snap ?? point.world;
@@ -375,6 +408,11 @@ export class ToolController {
   }
 
   move(point) {
+    if (this.sub) {
+      this.sub.move(point);
+      this.viewer.redraw();
+      return;
+    }
     switch (this.mode) {
       case "select": {
         const d = this.drag;
@@ -401,6 +439,7 @@ export class ToolController {
       case "line":
       case "rect":
       case "circle":
+      case "arrow":
       case "ctext":
         // 指を動かしている間も、吸着の位置と途中の長さを見せる(離した位置が採用される)
         this.snap = this.#nearEndpoint(point);
@@ -414,6 +453,14 @@ export class ToolController {
   async up(point) {
     const moved = this.downAt ? Math.hypot(point.sx - this.downAt.sx, point.sy - this.downAt.sy) : 0;
     this.downAt = null;
+    if (this.sub) {
+      const sub = this.sub;
+      this.sub = null;
+      sub.up(point);
+      this.onState();
+      this.viewer.redraw();
+      return;
+    }
     if (this.picking && ATTR_MODES.includes(this.mode)) {
       // 属性取得の待ち: 図形をタップしたら属性を取る(線や文字は、置かない)
       this.snap = null;
@@ -456,7 +503,8 @@ export class ToolController {
       }
       case "line":
       case "rect":
-      case "circle": {
+      case "circle":
+      case "arrow": {
         const p = this.#snapPoint(point);
         if (!this.draft) this.draft = { item: { kind: this.mode, points: [], scale: this.getScale() }, cursor: null };
         const pts = this.draft.item.points;

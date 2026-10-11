@@ -148,14 +148,27 @@ export function drawAnnotations(frame, { items, draft = null, snap = null, selec
       const mid = all[Math.floor(all.length / 2) - (all.length % 2 === 0 ? 1 : 0)] ?? all[0];
       const total = polylineLength(cursor ? [...item.points, cursor] : item.points);
       label(formatLength(realLength(total, item.scale ?? 1)), { x: mid.x, y: mid.y - px(16) }, color);
-    } else if (item.kind === "line" || item.kind === "rect" || item.kind === "circle") {
+    } else if (item.kind === "line" || item.kind === "rect" || item.kind === "circle" || item.kind === "arrow") {
       // 作図中の予告(破線)。確定すると、図面の図形になる
       const w0 = item.points[0];
       const sc = item.scale ?? 1;
       ctx.lineWidth = px(1.5);
-      if (cursor && item.kind === "line") {
+      if (cursor && (item.kind === "line" || item.kind === "arrow")) {
         path(all);
         ctx.stroke();
+        if (item.kind === "arrow") {
+          // 先端(2点目)に、矢印の頭の予告
+          const [p0, p1] = all;
+          const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+          const ux = (p1.x - p0.x) / len, uy = (p1.y - p0.y) / len;
+          const h = Math.min(px(12), len / 2);
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p1.x - ux * h - uy * h * 0.3, p1.y - uy * h + ux * h * 0.3);
+          ctx.lineTo(p1.x - ux * h + uy * h * 0.3, p1.y - uy * h - ux * h * 0.3);
+          ctx.closePath();
+          ctx.fill();
+        }
         label(formatLength(realLength(distance(w0, cursor), sc)), { x: (all[0].x + all[1].x) / 2, y: (all[0].y + all[1].y) / 2 - px(14) }, color);
       } else if (cursor && item.kind === "rect") {
         const a = all[0];

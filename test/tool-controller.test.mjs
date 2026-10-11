@@ -173,3 +173,61 @@ test("文字: キャンセルや空文字では何も描かない", async () => 
   await tap(10, 10);
   assert.equal(added.length, 0);
 });
+
+test("矢印: 根元と先端の2点で、軸の線と塗りつぶしの頭(三角形)を描き足す。属性取得も使われる", async () => {
+  const { tc, tap, added } = setupShapes([DASHED]);
+  tc.setMode("arrow");
+  await tap(0, 0);
+  await tap(40, 0);
+  assert.equal(added.length, 2);
+  const [shaft, head] = added;
+  assert.equal(shaft.type, "LINE");
+  assert.equal(head.type, "SOLID");
+  assert.deepEqual([head.x1, head.y1], [40, 0]); // 先端
+  assert.ok(Math.abs(shaft.x2 - 37) < 1e-9); // 頭は3mm。軸は頭の根元まで
+  assert.ok(Math.abs(head.y2 + head.y3) < 1e-9 && head.y2 !== head.y3); // 頭は軸の左右対称
+  assert.deepEqual([head.x3, head.y3], [head.x4, head.y4]);
+  tc.togglePick();
+  await tap(50, 100);
+  await tap(0, 20);
+  await tap(4, 20); // 短い矢印(4mm): 頭は全長の半分(2mm)まで
+  assert.equal(added.at(-1).line_type, "JWW_DASHED1");
+  assert.ok(Math.abs(added.at(-2).x2 - 2) < 1e-9);
+});
+
+test("選択: 図面の図形の操作と、注釈の操作を、1つのモードで振り分ける", async () => {
+  const calls = [];
+  const sub = {
+    hasSelection: false, baseMove: null, stretch: null, edits: { entities: [] },
+    hitsCornerHandle: () => false, clearSelection() { this.hasSelection = false; },
+    down: () => calls.push("down"), move: () => calls.push("move"), up: () => calls.push("up"), abort: () => calls.push("abort"),
+  };
+  const { tc, store, pt, tap } = setup();
+  tc.objectTool = sub;
+  const note = store.add({ kind: "mark", at: { x: 100, y: 100 } });
+  tc.setMode("select");
+  // 注釈の上: 注釈を選ぶ(図面の図形のツールには渡さない)
+  tc.down(pt(100, 101));
+  assert.equal(tc.selectedId, note.id);
+  await tc.up(pt(100, 101));
+  assert.deepEqual(calls, []);
+  // 何もない所: 図面の図形のツールに預け、注釈の選択は外す
+  tc.down(pt(300, 300));
+  assert.equal(tc.selectedId, null);
+  tc.move(pt(310, 310));
+  await tc.up(pt(310, 310));
+  assert.deepEqual(calls, ["down", "move", "up"]);
+  // 図形を選んでいる間の、角の取っ手は、注釈より優先
+  sub.hasSelection = true;
+  sub.hitsCornerHandle = () => true;
+  tc.down(pt(100, 101));
+  assert.equal(tc.selectedId, null);
+  tc.abort();
+  assert.equal(calls.at(-1), "abort");
+  // 注釈を選ぶと、図形の選択は外れる
+  sub.hitsCornerHandle = () => false;
+  tc.down(pt(100, 101));
+  assert.equal(tc.selectedId, note.id);
+  assert.equal(sub.hasSelection, false);
+  await tc.up(pt(100, 101));
+});

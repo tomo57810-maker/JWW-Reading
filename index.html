@@ -34,23 +34,25 @@
   <nav id="tools" class="tools" aria-label="測定・注釈" hidden>
     <div class="tool-row" role="group" aria-label="ツール">
       <button class="tool" type="button" data-tool="move" aria-pressed="true">移動</button>
-      <button class="tool" type="button" data-tool="obj" aria-pressed="false">図形</button>
       <button class="tool" type="button" data-tool="select" aria-pressed="false">選択</button>
+      <button class="tool" type="button" data-group="shape" aria-pressed="false">図形</button>
+      <button class="tool" type="button" data-tool="ctext" aria-pressed="false">文字</button>
       <button class="tool" type="button" data-group="measure" aria-pressed="false">測定</button>
       <button class="tool" type="button" data-tool="mark" aria-pressed="false">基準点</button>
-      <button class="tool" type="button" data-tool="line" aria-pressed="false">線</button>
-      <button class="tool" type="button" data-tool="rect" aria-pressed="false">矩形</button>
-      <button class="tool" type="button" data-tool="circle" aria-pressed="false">円</button>
-      <button class="tool" type="button" data-tool="ctext" aria-pressed="false">文字</button>
       <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
       <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
-      <button class="tool" type="button" data-tool="erase" aria-pressed="false">消す</button>
     </div>
     <div id="opts" class="tool-row sub" hidden>
       <span id="m-opts" class="tool-row" role="group" aria-label="測定の種類" hidden>
         <button class="btn small" type="button" data-tool="dim" aria-pressed="false">寸法</button>
         <button class="btn small" type="button" data-tool="area" aria-pressed="false">面積</button>
         <button class="btn small" type="button" data-tool="route" aria-pressed="false">ルート</button>
+      </span>
+      <span id="s-opts" class="tool-row" role="group" aria-label="図形の種類" hidden>
+        <button class="btn small" type="button" data-tool="line" aria-pressed="false">線</button>
+        <button class="btn small" type="button" data-tool="rect" aria-pressed="false">矩形</button>
+        <button class="btn small" type="button" data-tool="circle" aria-pressed="false">円</button>
+        <button class="btn small" type="button" data-tool="arrow" aria-pressed="false">矢印</button>
       </span>
       <span id="a-opts" class="tool-row" role="group" aria-label="属性" hidden>
         <button id="t-pick" class="btn small" type="button" aria-pressed="false">属性取得</button>

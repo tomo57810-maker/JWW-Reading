@@ -13,6 +13,7 @@ export const COLORS = {
   line: "#1565c0",
   rect: "#1565c0",
   circle: "#1565c0",
+  arrow: "#1565c0",
 };
 
 let counter = 0;
