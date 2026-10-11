@@ -76,6 +76,7 @@
       <span id="tool-hint" class="hint"></span>
       <button id="t-shape-num" class="btn small" type="button" hidden>数値</button>
       <button id="t-add" class="btn small" type="button" aria-pressed="false" hidden>追加選択</button>
+      <button id="t-autowall" class="btn small" type="button" hidden>壁を自動選択</button>
       <button id="t-base" class="btn small" type="button" hidden>基点移動</button>
       <button id="t-stretch" class="btn small" type="button" hidden>伸縮</button>
       <button id="t-num" class="btn small" type="button" hidden>数値</button>
@@ -154,6 +155,22 @@
       <ul id="recent-list" class="od-list"></ul>
       <p class="note">控えは、この端末の中だけに残ります(最大5件)。不要になったら、削除してください。</p>
     </div>
+  </dialog>
+
+  <dialog id="aw" class="od">
+    <form method="dialog" class="od-body">
+      <strong>壁を自動で選ぶ</strong>
+      <p class="note">画面に見えている範囲から、壁の両面にあたる「平行な2本の長い線」を探して選びます。壁のある所を拡大してから押してください。</p>
+      <label class="opt">壁の厚み <input id="aw-min" class="search" type="number" inputmode="decimal" step="any" value="60" style="width:6em"> 〜 <input id="aw-max" class="search" type="number" inputmode="decimal" step="any" value="400" style="width:6em"> mm</label>
+      <label class="opt">線の最小の長さ <input id="aw-len" class="search" type="number" inputmode="decimal" step="any" value="400" style="width:6em"> mm</label>
+      <label class="opt"><input id="aw-ortho" type="checkbox" checked> 水平・垂直の線だけ(斜めの壁があるときは、外す)</label>
+      <label class="opt"><input id="aw-skip" type="checkbox" checked> ハッチ・寸法・通り芯・設備などのレイヤは除く</label>
+      <p class="note">数値は実寸(mm)です。縮尺は、画面の「縮尺 1/n」を使います。</p>
+      <div class="row">
+        <button class="btn" value="cancel" formnovalidate>やめる</button>
+        <button class="btn primary" value="ok">選ぶ</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="p3" class="od">

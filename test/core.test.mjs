@@ -265,3 +265,43 @@ test("3D: なぞった壁の保存・読み込み。図形に結びつかない�
   assert.equal(t.load({ baseCount: 7, items: [{ id: "x", kind: "wall", ids: [], path: [[0, 0]], z0: 0 }] }, 7).count, 0); // 1点だけの壁は不正
   assert.match(describePart(t.list[0] ?? s.list[0]), /なぞって作成\(2点\)/);
 });
+
+import { detectWalls } from "../js/wall-detect.js";
+
+// 縮尺1/100: 用紙1mm=実寸100mm。壁厚200mm=用紙2mm、長さ5m=用紙50mm
+const L = (x1, y1, x2, y2, layer = "壁") => ({ type: "LINE", layer, x1, y1, x2, y2 });
+
+test("壁の自動検出: 厚み200mmの平行な2本の長い線を、壁として選ぶ", () => {
+  const ents = [L(0, 0, 50, 0), L(0, 2, 50, 2), L(0, 20, 5, 20) /* 短い */, L(0, 30, 50, 30) /* 相手のいない線 */];
+  const r = detectWalls(ents, { scale: 100 });
+  assert.deepEqual(r.ids, [0, 1]);
+  assert.equal(r.pairs, 1);
+});
+
+test("壁の自動検出: 厚みが合わない(配管の2本線50mm・家具の600mm)、重ならない、平行でない線は選ばない", () => {
+  assert.deepEqual(detectWalls([L(0, 0, 50, 0), L(0, 0.5, 50, 0.5)], { scale: 100 }).ids, []); // 50mm
+  assert.deepEqual(detectWalls([L(0, 0, 50, 0), L(0, 6, 50, 6)], { scale: 100 }).ids, []); // 600mm
+  assert.deepEqual(detectWalls([L(0, 0, 50, 0), L(60, 2, 110, 2)], { scale: 100 }).ids, []); // 重ならない
+  assert.deepEqual(detectWalls([L(0, 0, 50, 0), L(0, 2, 50, 12)], { scale: 100, orthoOnly: false }).ids, []); // 平行でない
+});
+
+test("壁の自動検出: ハッチング(平行な線が何本も並ぶ)、ハッチ・通り芯のレイヤ、非表示のレイヤ、範囲外は選ばない", () => {
+  const hatch = Array.from({ length: 30 }, (_, k) => L(0, k, 50, k)); // ピッチ100mmで30本
+  const picked = detectWalls(hatch, { scale: 100 }).ids;
+  assert.ok(picked.length <= 6 && picked.every((i) => i < 3 || i > 26)); // 真ん中の線は選ばない(端の数本だけ、壁と区別できない)
+  assert.deepEqual(detectWalls([L(0, 0, 50, 0, "HATCHING"), L(0, 2, 50, 2, "HATCHING")], { scale: 100 }).ids, []);
+  assert.deepEqual(detectWalls([L(0, 0, 50, 0, "通芯"), L(0, 2, 50, 2, "通芯")], { scale: 100 }).ids, []);
+  const two = [L(0, 0, 50, 0), L(0, 2, 50, 2)];
+  assert.deepEqual(detectWalls(two, { scale: 100, isVisible: () => false }).ids, []);
+  assert.deepEqual(detectWalls(two, { scale: 100, bounds: { x0: 200, y0: 200, x1: 300, y1: 300 } }).ids, []);
+  assert.deepEqual(detectWalls(two, { scale: 100, bounds: { x0: -10, y0: -10, x1: 10, y1: 10 } }).ids, [0, 1]);
+});
+
+test("壁の自動検出: 斜めの壁や、芯をはさんで3本(厚み150mmずつ)の線も扱う。消した図形は無視", () => {
+  const d = Math.SQRT1_2 * 2; // 用紙2mmを、45度の向きの法線方向にずらす
+  const diag = [L(0, 0, 50, 50), L(-d, d, 50 - d, 50 + d)];
+  assert.deepEqual(detectWalls(diag, { scale: 100 }).ids, []); // 既定は、水平・垂直の線だけ
+  assert.deepEqual(detectWalls(diag, { scale: 100, orthoOnly: false }).ids, [0, 1]);
+  const triple = [L(0, 0, 50, 0), L(0, 1.5, 50, 1.5), L(0, 3, 50, 3), null];
+  assert.deepEqual(detectWalls(triple, { scale: 100 }).ids, [0, 1, 2]);
+});

@@ -263,3 +263,4 @@ body {
 .wall-opts label { display: flex; align-items: center; gap: 4px; flex: none; font-size: 13px; color: var(--muted); }
 .wall-opts input, .wall-opts select { min-height: 36px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
 .wall-opts input { width: 5em; }
+.tool-row .btn.small { flex: none; white-space: nowrap; }

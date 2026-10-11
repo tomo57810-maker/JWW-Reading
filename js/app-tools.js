@@ -10,6 +10,7 @@ import { makeJpegPdf } from "./pdf.js";
 import { buildDxf } from "./dxf-export.js";
 import { PartStore, PART_KINDS, buildScene, describePart, isPartSource } from "./parts3d.js";
 import { View3D } from "./view3d.js";
+import { detectWalls } from "./wall-detect.js";
 import { readDxfText } from "../vendor/ezjww.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -65,7 +66,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     txt: $("txt"), txtInput: $("txt-input"), txtTitle: $("txt-title"), txtSizeRow: $("txt-size-row"), txtSize: $("txt-size"), resume: $("resume"),
     opts: $("opts"), mOpts: $("m-opts"), aOpts: $("a-opts"), pick: $("t-pick"), attrInfo: $("attr-info"), attrChip: $("attr-chip"), attrReset: $("t-attr-reset"),
     groups: [...document.querySelectorAll("[data-group]")],
-    sOpts: $("s-opts"), wOpts: $("w-opts"), wH: $("w-h"), wT: $("w-t"), wZ: $("w-z"), wA: $("w-a"), to3d: $("t-3d"), v3dBtn: $("v3d-btn"),
+    sOpts: $("s-opts"), autoWall: $("t-autowall"), wOpts: $("w-opts"), wH: $("w-h"), wT: $("w-t"), wZ: $("w-z"), wA: $("w-a"), to3d: $("t-3d"), v3dBtn: $("v3d-btn"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"), exAutosave: $("ex-autosave"), exDraft: $("ex-draft"),
   };
 
@@ -314,6 +315,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     const objSel = obj && objectTool.hasSelection;
     const busy = obj && (objectTool.baseMove || objectTool.stretch); // 基点移動・伸縮の途中
     el.add.hidden = !obj || Boolean(busy);
+    el.autoWall.hidden = !obj || Boolean(busy);
     el.add.setAttribute("aria-pressed", String(objectTool.additive));
     for (const b of [el.rl, el.rr, el.big, el.small, el.base, el.stretch]) b.hidden = !objSel || Boolean(busy);
     el.to3d.hidden = !objSel || Boolean(busy);
@@ -369,6 +371,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   el.small.addEventListener("click", () => objectTool.scaleBy(0.8));
   el.edit.addEventListener("click", () => tools.editSelectedText());
   el.to3d.addEventListener("click", () => makePart());
+  el.autoWall.addEventListener("click", () => autoSelectWalls());
   el.v3dBtn.addEventListener("click", () => openView3d());
   el.scale.addEventListener("change", () => {
     store.settings.scale = getScale();
@@ -434,9 +437,46 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     const first = edits.entities[ids[0]];
     parts.add({
       kind, ids, z0: vals.z0, h: vals.h, ...(kind === "wall" ? { thick: vals.t } : { dia: vals.d }),
-      color: Number.isInteger(first?.color) ? first.color : 7, label: p3.label.value.trim(),
+      color: kind === "pipe" && Number.isInteger(first?.color) ? first.color : 7, label: p3.label.value.trim(), // 壁は、元の線の色に関係なく、灰色
     });
     flash(`3D化しました(右上の「3D」で見られます)`);
+  }
+
+  /** 画面に見えている範囲から、壁らしい線(厚みの合う平行な2本線)を探して、選ぶ。条件は、ダイアログで変えられる。 */
+  async function autoSelectWalls() {
+    if (!edits) return;
+    const aw = { dlg: $("aw"), min: $("aw-min"), max: $("aw-max"), len: $("aw-len"), ortho: $("aw-ortho"), skip: $("aw-skip") };
+    aw.min.value = prefs.get("aw.min", "60");
+    aw.max.value = prefs.get("aw.max", "400");
+    aw.len.value = prefs.get("aw.len", "400");
+    aw.ortho.checked = prefs.get("aw.ortho", "on") === "on";
+    aw.skip.checked = prefs.get("aw.skip", "on") === "on";
+    const ok = await new Promise((resolve) => {
+      aw.dlg.addEventListener("close", () => resolve(aw.dlg.returnValue === "ok"), { once: true });
+      aw.dlg.returnValue = "cancel";
+      aw.dlg.showModal();
+    });
+    if (!ok) return;
+    const num = (input, fallback) => (input.value !== "" && Number(input.value) > 0 ? Number(input.value) : fallback);
+    const minThickMm = num(aw.min, 60);
+    const maxThickMm = Math.max(minThickMm, num(aw.max, 400));
+    const minLenMm = num(aw.len, 400);
+    prefs.set("aw.min", String(minThickMm));
+    prefs.set("aw.max", String(maxThickMm));
+    prefs.set("aw.len", String(minLenMm));
+    prefs.set("aw.ortho", aw.ortho.checked ? "on" : "off");
+    prefs.set("aw.skip", aw.skip.checked ? "on" : "off");
+    const w = viewer.canvas.clientWidth, h = viewer.canvas.clientHeight;
+    const a = viewer.toWorld(0, 0), b = viewer.toWorld(w, h);
+    const bounds = { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) };
+    const r = detectWalls(edits.entities, {
+      scale: getScale(), bounds, isVisible: (e) => !viewer.hiddenLayers.has(e.layer),
+      minThickMm, maxThickMm, minLenMm, orthoOnly: aw.ortho.checked, skipLayers: aw.skip.checked,
+    });
+    objectTool.select(r.ids);
+    flash(r.ids.length === 0
+      ? `壁らしい線が、見えている範囲に見つかりません(厚み${minThickMm}〜${maxThickMm}mm)。壁を拡大するか、条件を変えてください`
+      : `壁らしい線 ${r.ids.length}本(${r.pairs}組)を選びました。違う線は「追加選択」で外せます。続けて「3D化」`);
   }
 
   // 壁をなぞって起こす(「壁3D」)。高さ・厚みなどは、画面の入力欄から読む
