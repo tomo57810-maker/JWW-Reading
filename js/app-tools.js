@@ -26,6 +26,7 @@ const HINTS = {
   arrow: "図形(矢印): 根元と、先端(矢印の頭の側)をタップ",
   rect: "図形(矩形): 対角の2点をタップ(「数値」で大きさ指定)",
   circle: "図形(円): 中心と、円周上の点をタップ(「数値」で半径指定)",
+  wall: "壁の線を順にタップ(端点に吸着)→「完了」。最初の点にもう一度触れると、輪を閉じます。3Dの壁になります",
   ctext: "文字を置きたい所をタップ。文字の大きさ・種類は「属性取得」で既存の文字から取れます",
   pen: "指でなぞって書く",
   text: "コメント(図面とは別の書き込み)を置きたい所をタップ",
@@ -64,7 +65,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     txt: $("txt"), txtInput: $("txt-input"), txtTitle: $("txt-title"), txtSizeRow: $("txt-size-row"), txtSize: $("txt-size"), resume: $("resume"),
     opts: $("opts"), mOpts: $("m-opts"), aOpts: $("a-opts"), pick: $("t-pick"), attrInfo: $("attr-info"), attrChip: $("attr-chip"), attrReset: $("t-attr-reset"),
     groups: [...document.querySelectorAll("[data-group]")],
-    sOpts: $("s-opts"), to3d: $("t-3d"), v3dBtn: $("v3d-btn"),
+    sOpts: $("s-opts"), wOpts: $("w-opts"), wH: $("w-h"), wT: $("w-t"), wZ: $("w-z"), wA: $("w-a"), to3d: $("t-3d"), v3dBtn: $("v3d-btn"),
     ex: $("ex"), exMsg: $("ex-msg"), exOverlay: $("ex-overlay"), exAutosave: $("ex-autosave"), exDraft: $("ex-draft"),
   };
 
@@ -185,6 +186,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
       if (w) ensureLayerVisible(w.key); // 描き足した図形が、隠れたレイヤに入って見えなくならないようにする
       return w ? { layer: w.key, color: w.color } : {};
     },
+    getWallParams: () => wallParams(),
+    onWall: ({ path, closed }) => makeWall(path, closed),
     askText: (at, initial) => askText(at, initial),
     askDrawText: ({ initial, height }) => askDrawText(initial, height),
     onNotice: (msg) => flash(msg),
@@ -283,7 +286,9 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     el.mOpts.hidden = !measuring;
     el.sOpts.hidden = !shaping;
     el.aOpts.hidden = !attrMode;
-    el.opts.hidden = !(measuring || attrMode);
+    const wallMode = tools.mode === "wall";
+    el.wOpts.hidden = !wallMode;
+    el.opts.hidden = !(measuring || attrMode || wallMode);
     if (attrMode) {
       el.pick.setAttribute("aria-pressed", String(tools.picking));
       el.attrInfo.textContent = tools.picking ? "取りたい既存の図形をタップ" : tools.attrSummary();
@@ -378,7 +383,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   el.ex.querySelector("[data-ex-close]").addEventListener("click", () => el.ex.close());
 
   // ---- 3D ----
-  const p3 = { dlg: $("p3"), hint: $("p3-hint"), kind: $("p3-kind"), z0: $("p3-z0"), h: $("p3-h"), t: $("p3-t"), d: $("p3-d"), label: $("p3-label"), z0Label: $("p3-z0-label"), hLabel: $("p3-h-label"), tRow: $("p3-t-row"), dRow: $("p3-d-row") };
+  const p3 = { dlg: $("p3"), hint: $("p3-hint"), kind: $("p3-kind"), z0: $("p3-z0"), h: $("p3-h"), t: $("p3-t"), d: $("p3-d"), label: $("p3-label"), z0Label: $("p3-z0-label"), hLabel: $("p3-h-label"), tRow: $("p3-t-row"), dRow: $("p3-d-row"), nc: $("p3-nc"), ncRow: $("p3-nc-row") };
   const p3Defaults = {
     wall: { z0: 0, h: 2700, t: 0, d: 50 },
     pipe: { z0: 2500, h: 1000, t: 0, d: 50 },
@@ -389,6 +394,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     p3.hLabel.textContent = wall ? "高さ" : "立上りの長さ(平面図の円のとき)";
     p3.tRow.hidden = !wall;
     p3.dRow.hidden = wall;
+    p3.ncRow.hidden = !wall || !p3.hasRound; // 円弧・円が選択に含まれる壁のときだけ、除外の選択肢を出す
   };
   p3.kind.addEventListener("change", () => {
     const d = JSON.parse(prefs.get(`p3.${p3.kind.value}`, "null")) ?? p3Defaults[p3.kind.value];
@@ -401,7 +407,9 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
 
   /** 選んでいる図形を、3D部品にする(種類・高さなどを聞く)。 */
   async function makePart() {
-    const ids = objectTool.selection.filter((i) => isPartSource(edits?.entities[i]));
+    let ids = objectTool.selection.filter((i) => isPartSource(edits?.entities[i]));
+    const hasRound = ids.some((i) => edits.entities[i].type !== "LINE");
+    p3.hasRound = hasRound;
     if (ids.length === 0) {
       flash("線・円弧・円を選んでください(文字などは3Dにできません)");
       return;
@@ -416,6 +424,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     });
     if (!ok) return;
     const kind = p3.kind.value;
+    if (kind === "wall" && p3.nc.checked) ids = ids.filter((i) => edits.entities[i].type === "LINE");
+    if (ids.length === 0) return flash("壁にできる線がありません(円弧・円は除外されました)");
     const num = (el_, fallback) => (Number.isFinite(Number(el_.value)) && el_.value !== "" ? Number(el_.value) : fallback);
     const vals = { z0: num(p3.z0, 0), h: num(p3.h, 0), t: Math.max(0, num(p3.t, 0)), d: num(p3.d, 50) };
     if (kind === "wall" && !(vals.h > 0)) return flash("高さは、0より大きい数にしてください");
@@ -427,6 +437,27 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
       color: Number.isInteger(first?.color) ? first.color : 7, label: p3.label.value.trim(),
     });
     flash(`3D化しました(右上の「3D」で見られます)`);
+  }
+
+  // 壁をなぞって起こす(「壁3D」)。高さ・厚みなどは、画面の入力欄から読む
+  for (const [key, input] of [["w.h", el.wH], ["w.t", el.wT], ["w.z", el.wZ], ["w.a", el.wA]]) {
+    input.value = prefs.get(key, input.value);
+    input.addEventListener("change", () => {
+      prefs.set(key, input.value);
+      if (tools.draft?.item.kind === "wall") tools.draft.item.thick = wallParams().thick; // 作図中の帯の太さに反映
+      viewer.redraw();
+    });
+  }
+  function wallParams() {
+    const n = (input, fallback) => (input.value !== "" && Number.isFinite(Number(input.value)) ? Number(input.value) : fallback);
+    return { height: n(el.wH, 2700), thick: Math.max(0, n(el.wT, 150)), z0: n(el.wZ, 0), align: el.wA.value };
+  }
+
+  function makeWall(path, closed) {
+    const w = wallParams();
+    if (!(w.height > 0)) return flash("壁の高さは、0より大きい数にしてください");
+    parts.add({ kind: "wall", ids: [], path, closed, z0: w.z0, h: w.height, thick: w.thick, align: w.align, color: 7, label: "" });
+    flash(`壁を作りました(高さ${w.height}・厚み${w.thick}mm)。「3D」で見られます`);
   }
 
   let view3d = null;

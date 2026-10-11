@@ -40,6 +40,7 @@
       <button class="tool" type="button" data-group="shape" aria-pressed="false">図形</button>
       <button class="tool" type="button" data-tool="ctext" aria-pressed="false">文字</button>
       <button class="tool" type="button" data-group="measure" aria-pressed="false">測定</button>
+      <button class="tool" type="button" data-tool="wall" aria-pressed="false">壁3D</button>
       <button class="tool" type="button" data-tool="mark" aria-pressed="false">基準点</button>
       <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
       <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
@@ -49,6 +50,13 @@
         <button class="btn small" type="button" data-tool="dim" aria-pressed="false">寸法</button>
         <button class="btn small" type="button" data-tool="area" aria-pressed="false">面積</button>
         <button class="btn small" type="button" data-tool="route" aria-pressed="false">ルート</button>
+      </span>
+      <span id="w-opts" class="tool-row wall-opts" role="group" aria-label="壁の設定" hidden>
+        <label>高さ<input id="w-h" type="number" inputmode="decimal" step="any" value="2700" aria-label="壁の高さ(mm)"></label>
+        <label>厚み<input id="w-t" type="number" inputmode="decimal" step="any" value="150" aria-label="壁の厚み(mm)"></label>
+        <label>下端<input id="w-z" type="number" inputmode="decimal" step="any" value="0" aria-label="壁の下端の高さ(mm)"></label>
+        <label>線の<select id="w-a" aria-label="なぞる線の位置"><option value="center">中心</option><option value="left">左側</option><option value="right">右側</option></select></label>
+        <span class="hint">単位mm。なぞる線が壁の中心か、左右の面か</span>
       </span>
       <span id="s-opts" class="tool-row" role="group" aria-label="図形の種類" hidden>
         <button class="btn small" type="button" data-tool="line" aria-pressed="false">線</button>
@@ -160,6 +168,7 @@
       </label>
       <label class="opt"><span id="p3-z0-label">下端の高さ</span> <input id="p3-z0" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:7em"> mm</label>
       <label class="opt"><span id="p3-h-label">高さ</span> <input id="p3-h" class="search" type="number" inputmode="decimal" step="any" value="2700" style="width:7em"> mm</label>
+      <label class="opt" id="p3-nc-row"><input id="p3-nc" type="checkbox" checked> 円弧・円は含めない(扉の円弧などが壁にならないように)</label>
       <label class="opt" id="p3-t-row">壁の厚み(0なら薄い面) <input id="p3-t" class="search" type="number" inputmode="decimal" step="any" value="0" style="width:7em"> mm</label>
       <label class="opt" id="p3-d-row">管の外径 <input id="p3-d" class="search" type="number" inputmode="decimal" step="any" value="50" style="width:7em"> mm</label>
       <label class="opt">名前(任意) <input id="p3-label" class="search" type="text" maxlength="30" placeholder="例: 外壁、給水管" style="width:11em"></label>

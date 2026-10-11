@@ -237,3 +237,31 @@ test("3D: 部品の保存・読み込み(図形の数が違えば読まない)�
   assert.equal(s.list.length, 0);
   assert.match(describePart({ kind: "pipe", ids: [1], z0: 2500, dia: 50, label: "給水" }), /給水.*2500.*50/);
 });
+
+test("3D: なぞった壁は、折れ線の各辺が箱になる(中心・左・右の位置、角のすき間を埋める延長)", () => {
+  // 縮尺1/100、用紙の10mm=実寸1m。厚み200mm=用紙2mm、半分=1mm
+  const wall = { id: "w", kind: "wall", ids: [], path: [[0, 0], [10, 0], [10, 10]], closed: false, z0: 0, h: 2700, thick: 200, align: "center" };
+  const sc = buildScene([wall], [], { scale: 100 });
+  assert.equal(sc.quads.length, 12); // 2辺 × 6面
+  const xs = sc.quads.flatMap((q) => q.c.map((p) => p[0]));
+  const zs = sc.quads.flatMap((q) => q.c.map((p) => p[2]));
+  assert.ok(near(Math.min(...xs), 0)); // 始点の端は延ばさない
+  assert.ok(near(Math.max(...xs), 1.1)); // 角では、厚みの半分(0.1m)だけ外側へ出て、すき間を埋める
+  assert.ok(near(Math.max(...zs), 0.1)); // 1辺目の手前側(平面図の下側)に、厚みの半分
+  assert.ok(near(Math.min(...zs), -1)); // 2辺目の終点(平面図のY=10 → Z=-1)
+  const left = buildScene([{ ...wall, align: "left", path: [[0, 0], [10, 0]] }], [], { scale: 100 });
+  const lz = left.quads.flatMap((q) => q.c.map((p) => p[2]));
+  assert.ok(near(Math.min(...lz), -0.2) && near(Math.max(...lz), 0)); // 進行方向の左(平面図の上側=Zのマイナス側)へ、厚み全部
+  const closed = buildScene([{ ...wall, closed: true, path: [[0, 0], [10, 0], [10, 10], [0, 10]] }], [], { scale: 100 });
+  assert.equal(closed.quads.length, 24); // 4辺 × 6面
+  assert.equal(buildScene([{ ...wall, thick: 0, path: [[0, 0], [10, 0]] }], [], { scale: 100 }).quads.length, 1); // 厚み0は面
+});
+
+test("3D: なぞった壁の保存・読み込み。図形に結びつかないので、図形の数が同じなら読み込める", () => {
+  const s = new PartStore();
+  s.add({ kind: "wall", ids: [], path: [[0, 0], [10, 0]], closed: false, z0: 0, h: 2700, thick: 150, align: "center" });
+  const t = new PartStore();
+  assert.equal(t.load(JSON.parse(JSON.stringify(s.toJSON(7))), 7).count, 1);
+  assert.equal(t.load({ baseCount: 7, items: [{ id: "x", kind: "wall", ids: [], path: [[0, 0]], z0: 0 }] }, 7).count, 0); // 1点だけの壁は不正
+  assert.match(describePart(t.list[0] ?? s.list[0]), /なぞって作成\(2点\)/);
+});

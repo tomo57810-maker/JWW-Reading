@@ -9,7 +9,7 @@ const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
-export const MODES = ["move", "select", "dim", "area", "route", "mark", "line", "rect", "circle", "arrow", "ctext", "pen", "text", "erase"];
+export const MODES = ["move", "select", "dim", "area", "route", "wall", "mark", "line", "rect", "circle", "arrow", "ctext", "pen", "text", "erase"];
 export const MEASURE_MODES = ["dim", "area", "route"]; // 「測定」にまとめるモード
 export const SHAPE_MODES = ["line", "rect", "circle", "arrow"]; // 図面に図形(線・矩形・円・矢印)を描き足すモード
 const ARROW_HEAD_MM = 3; // 矢印の頭の長さ(用紙mm)。短い矢印では、全長の半分まで
@@ -30,9 +30,11 @@ export class ToolController {
    * @param {(id: string) => {x:number,y:number,w:number,h:number} | null} [deps.getTextRect] 画面に描いたコメントの四角(画面px)。選ぶときの当たり判定に使う
    * @param {(opts: {initial?: string, height: number}) => Promise<{text: string, height: number} | null>} [deps.askDrawText] 図面に描く文字(内容と高さ)を入力してもらう
    * @param {(message: string) => void} [deps.onNotice] 利用者に一言伝えたいとき(属性を取得した、など)
+   * @param {() => {height:number, thick:number, z0:number, align:string}} [deps.getWallParams] 壁の高さ・厚み・下端・位置(実寸mm)
+   * @param {(wall: {path: number[][], closed: boolean}) => void} [deps.onWall] 壁をなぞり終えたとき(3Dの部品にする)
    * @param {() => void} [deps.onState] モードや作図中の状態が変わったとき
    */
-  constructor({ viewer, store, getScale, getSnap, askText, askDrawText = null, askOffset = async () => null, getTextRect = () => null, objectTool = null, getDrawStyle = () => ({}), onNotice = () => {}, onState = () => {} }) {
+  constructor({ viewer, store, getScale, getSnap, askText, askDrawText = null, askOffset = async () => null, getTextRect = () => null, objectTool = null, getDrawStyle = () => ({}), getWallParams = () => ({ height: 2700, thick: 150, z0: 0, align: "center" }), onWall = () => {}, onNotice = () => {}, onState = () => {} }) {
     this.viewer = viewer;
     this.store = store;
     this.getScale = getScale;
@@ -40,6 +42,8 @@ export class ToolController {
     this.askText = askText;
     this.askDrawText = askDrawText;
     this.onNotice = onNotice;
+    this.getWallParams = getWallParams;
+    this.onWall = onWall;
     this.askOffset = askOffset;
     this.getTextRect = getTextRect;
     this.objectTool = objectTool; // 図面の図形そのものを編集するツール(「選択」モードで、注釈より下の図形を扱う)
@@ -84,6 +88,13 @@ export class ToolController {
     if (!d) return false;
     const need = d.item.kind === "area" ? 3 : 2;
     if (d.item.points.length < need) return false;
+    if (d.item.kind === "wall") {
+      this.onWall({ path: d.item.points.map((p) => [p.x, p.y]), closed: Boolean(d.item.closed) });
+      this.draft = null;
+      this.onState();
+      this.viewer.redraw();
+      return true;
+    }
     this.store.add({ ...d.item });
     this.draft = null;
     this.onState();
@@ -393,6 +404,7 @@ export class ToolController {
       case "dim":
       case "area":
       case "route":
+      case "wall":
       case "mark":
       case "line":
       case "rect":
@@ -435,6 +447,7 @@ export class ToolController {
       case "dim":
       case "area":
       case "route":
+      case "wall":
       case "mark":
       case "line":
       case "rect":
@@ -484,12 +497,22 @@ export class ToolController {
       }
       case "dim":
       case "area":
-      case "route": {
+      case "route":
+      case "wall": {
         const p = this.#snapPoint(point);
         if (!this.draft) {
-          this.draft = { item: { kind: this.mode, points: [], scale: this.getScale() }, cursor: null };
+          const item = { kind: this.mode, points: [], scale: this.getScale() };
+          if (this.mode === "wall") item.thick = this.getWallParams().thick; // 作図中の太さの表示に使う
+          this.draft = { item, cursor: null };
         }
         const pts = this.draft.item.points;
+        // 壁: 最初の点にもう一度触れると、輪をつないで(閉じて)完了する
+        if (this.mode === "wall" && pts.length >= 3 && distance(pts[0], p) * this.viewer.view.s <= SNAP_PX * 1.2) {
+          this.draft.item.closed = true;
+          this.snap = null;
+          this.finish();
+          break;
+        }
         const last = pts.at(-1);
         if (!last || distance(last, p) * this.viewer.view.s > 3) pts.push({ x: p.x, y: p.y }); // 同じ場所の二重タップは無視(吸着用の点そのものは持たない)
         this.snap = null;

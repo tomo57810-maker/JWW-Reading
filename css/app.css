@@ -260,3 +260,6 @@ body {
 .v3d-list { position: absolute; left: 0; right: 0; bottom: 30px; max-height: 45vh; overflow-y: auto; background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -6px 24px rgba(0,0,0,.18); padding: 8px 12px; }
 .v3d-list .row-part { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; }
 .v3d-list .row-part span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.wall-opts label { display: flex; align-items: center; gap: 4px; flex: none; font-size: 13px; color: var(--muted); }
+.wall-opts input, .wall-opts select { min-height: 36px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+.wall-opts input { width: 5em; }

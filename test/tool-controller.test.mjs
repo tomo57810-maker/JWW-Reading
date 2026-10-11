@@ -231,3 +231,27 @@ test("選択: 図面の図形の操作と、注釈の操作を、1つのモー�
   assert.equal(sub.hasSelection, false);
   await tc.up(pt(100, 101));
 });
+
+test("壁3D: 点を順にタップして「完了」で、なぞった点が壁として渡る。最初の点にもう一度触れると閉じる", async () => {
+  const walls = [];
+  const { tc, tap } = setup();
+  tc.onWall = (w) => walls.push(w);
+  tc.getWallParams = () => ({ height: 2700, thick: 200, z0: 0, align: "center" });
+  tc.setMode("wall");
+  await tap(0, 0);
+  assert.equal(tc.draft.item.thick, 200); // 作図中の帯の太さ
+  assert.equal(tc.finish(), false); // 1点では完了できない
+  await tap(100, 0);
+  await tap(100, 100);
+  assert.equal(tc.finish(), true);
+  assert.deepEqual(walls[0], { path: [[0, 0], [100, 0], [100, 100]], closed: false });
+  assert.equal(tc.draft, null);
+  // 輪を閉じる
+  await tap(0, 0);
+  await tap(100, 0);
+  await tap(100, 100);
+  await tap(0, 100);
+  await tap(2, 3); // 最初の点の近く(14px以内)
+  assert.deepEqual(walls[1], { path: [[0, 0], [100, 0], [100, 100], [0, 100]], closed: true });
+  assert.equal(tc.draft, null);
+});

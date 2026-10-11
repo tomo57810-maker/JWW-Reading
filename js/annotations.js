@@ -14,6 +14,7 @@ export const COLORS = {
   rect: "#1565c0",
   circle: "#1565c0",
   arrow: "#1565c0",
+  wall: "#8e24aa", // 3Dの壁をなぞっている途中
 };
 
 let counter = 0;

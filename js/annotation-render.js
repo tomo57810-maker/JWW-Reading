@@ -140,6 +140,24 @@ export function drawAnnotations(frame, { items, draft = null, snap = null, selec
       ctx.stroke();
       pts.forEach((p) => dot(p, color));
       if (item.points.length >= 3) label(areaLabel(item), toScreen(centroid(item.points)), color);
+    } else if (item.kind === "wall") {
+      // 壁の予告: 厚み(用紙mmに直して、画面の太さに)の半透明の帯と、中心線
+      const thickPx = ((item.thick ?? 0) / (item.scale ?? 1)) * view.s;
+      if (thickPx > 1) {
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.28;
+        ctx.lineCap = "butt";
+        ctx.lineWidth = thickPx;
+        path(all, item.closed);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.lineWidth = px(2);
+      path(all);
+      ctx.stroke();
+      pts.forEach((p) => dot(p, color));
+      if (all.length >= 2) label(formatLength(realLength(polylineLength(cursor ? [...item.points, cursor] : item.points), item.scale ?? 1)), { x: all.at(-1).x, y: all.at(-1).y - px(16) }, color);
     } else if (item.kind === "route") {
       ctx.lineWidth = px(3.5);
       path(all);
