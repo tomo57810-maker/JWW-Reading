@@ -14,7 +14,7 @@
 <body>
   <header class="bar">
     <label class="btn primary" for="file">開く</label>
-    <input id="file" type="file" accept=".jww,.jwc,application/octet-stream" hidden>
+    <input id="file" type="file" accept=".jww,.jwc,.dxf,application/octet-stream" hidden>
     <span id="name" class="name">図面が開かれていません</span>
     <button id="recent-btn" class="btn" type="button">最近</button>
     <button id="od-btn" class="btn" type="button">OneDrive</button>
@@ -27,7 +27,7 @@
   <main class="stage" id="stage">
     <canvas id="canvas" aria-label="図面表示"></canvas>
     <div id="empty" class="empty">
-      <p>JWWファイルをここにドラッグするか、<br>左上の「開く」から選んでください。</p>
+      <p>JWW・DXFファイルをここ(画面のどこでも)にドラッグするか、<br>左上の「開く」から選んでください。</p>
       <p class="note">図面はこの端末の中だけで処理され、外部には送信されません。</p>
     </div>
     <div id="busy" class="busy" hidden>読み込み中…</div>

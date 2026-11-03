@@ -75,6 +75,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   let edits = null; // 図面の図形の編集記録(図面を開くたびに作る)
   let unloadedParts = null; // 読み込めなかった保存済みの3D部品(そのまま持ち続ける)
   let sourceBytes = null; // 開いている図面の原本(DXFへの書き出しに使う)
+  let sourceIsDxf = false; // 原本がDXFのとき、DXFへの書き出しは未対応
   let unloadedEdits = null; // 読み込めなかった保存済みの編集(上書きして失わないよう、そのまま持ち続ける)
   let savedCore = coreOf(null); // 最後に保存した状態の核。いまの状態と違えば「未保存」
   let loading = false; // 図面を開く途中(読み込みによる変化は、変更として扱わない)
@@ -635,6 +636,10 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
 
   async function exportDxf() {
     if (!edits || !sourceBytes) return;
+    if (sourceIsDxf) {
+      el.exMsg.textContent = "DXFから開いた図面の、DXF書き出しは未対応です(PDF・注釈JSONは使えます)";
+      return;
+    }
     el.exMsg.textContent = "DXFを作っています…";
     await new Promise((r) => setTimeout(r, 30)); // 表示を更新させる
     try {
@@ -758,6 +763,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
         objectTool.clearSelection();
         storeKey = key;
         sourceBytes = bytes;
+        sourceIsDxf = model.source === "dxf";
         el.v3dBtn.disabled = false;
         snapIndex = new SnapIndex(model.entities);
         let snapTimer = 0;

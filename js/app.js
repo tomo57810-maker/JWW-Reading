@@ -1,9 +1,11 @@
 import { init, readDrawing, readHeader } from "../vendor/ezjww.mjs";
+import { decodeDxf, isBinaryDxf, looksLikeDxf, readDxfDrawing } from "./dxf-import.js";
 import { buildModel, explainNotDrawing } from "./drawing.js";
 import { Viewer } from "./viewer.js";
 import { LayerPanel } from "./layer-panel.js";
 import { OneDriveDialog } from "./onedrive-dialog.js";
-import { CLIENT_ID } from "./config.js";
+import { CLIENT_ID, EXPLORER_HOSTS } from "./config.js";
+import { fetchDrawing, pickDrawingUrl } from "./remote-drop.js";
 import { setupTools } from "./app-tools.js";
 import { LocalAnnotationStorage, fingerprintOf, storageKey } from "./annotations.js";
 import { FileLibrary } from "./library.js";
@@ -64,6 +66,19 @@ function setStatus(text) {
   els.status.textContent = text;
 }
 
+/** DXFを、JWWと同じ画面用モデルにする(Jw_cadのレイヤグループはないので、すべてのレイヤを1グループにまとめる)。 */
+function modelFromDxf(bytes) {
+  const dxf = readDxfDrawing(decodeDxf(bytes));
+  const model = buildModel(dxf, null);
+  model.source = "dxf";
+  model.unitScale = dxf.unitScale;
+  model.unsupportedTypes = dxf.unsupportedTypes;
+  const keys = model.groups.flatMap((g) => g.layers.map((l) => l.key));
+  const wk = keys.includes("0") ? "0" : keys[0];
+  model.writeLayer = wk === undefined ? null : { key: wk, color: 7 }; // 描き足す図形の、レイヤと色
+  return model;
+}
+
 async function openFile(file, { fromLibrary = false } = {}) {
   els.busy.hidden = false;
   try {
@@ -75,7 +90,12 @@ async function openFile(file, { fromLibrary = false } = {}) {
       return;
     }
     const t0 = performance.now();
-    const model = buildModel(readDrawing(bytes), readHeader(bytes));
+    const isDxf = /\.dxf$/i.test(file.name) || looksLikeDxf(bytes);
+    if (isDxf && isBinaryDxf(bytes)) {
+      setStatus("バイナリ形式のDXFは開けません。CADで「ASCII形式のDXF」として保存し直してください。");
+      return;
+    }
+    const model = isDxf ? modelFromDxf(bytes) : buildModel(readDrawing(bytes), readHeader(bytes));
     const ms = Math.round(performance.now() - t0);
     const key = storageKey(await fingerprintOf(file.name, bytes));
     saveView(); // 開いていた図面の表示位置を、切り替える前に残す
@@ -99,9 +119,11 @@ async function openFile(file, { fromLibrary = false } = {}) {
     els.empty.hidden = true;
     els.fit.disabled = false;
     els.layersBtn.disabled = false;
-    const unsupported = model.unsupported.length ? ` / 未対応の図形 ${model.unsupported.length}個は表示していません` : "";
+    const unsupportedKinds = model.unsupportedTypes?.length ? `(${model.unsupportedTypes.join("・")})` : "";
+    const unsupported = model.unsupported.length ? ` / 未対応の図形 ${model.unsupported.length}個${unsupportedKinds}は表示していません` : "";
+    const dxfNote = isDxf ? ` / DXFとして読み込み(単位 ${model.unitScale === 1 ? "mm" : `×${model.unitScale}でmmに換算`})` : "";
     const keptNote = kept ? "" : " / この図面は、端末に控えを残せませんでした(次回は、開き直してください)";
-    setStatus(`図形 ${model.entities.length.toLocaleString()}個 / レイヤ ${model.layerCount} / 読み込み ${ms}ms${unsupported}${keptNote}`);
+    setStatus(`図形 ${model.entities.length.toLocaleString()}個 / レイヤ ${model.layerCount} / 読み込み ${ms}ms${dxfNote}${unsupported}${keptNote}`);
   } catch (err) {
     setStatus(`開けませんでした: ${err?.message ?? err}`);
   } finally {
@@ -188,15 +210,52 @@ els.theme.addEventListener("click", () => {
   viewer.setDark(state.dark);
 });
 
-for (const type of ["dragenter", "dragover"]) {
-  els.stage.addEventListener(type, (ev) => { ev.preventDefault(); els.stage.classList.add("drag"); });
-}
-for (const type of ["dragleave", "drop"]) {
-  els.stage.addEventListener(type, (ev) => { ev.preventDefault(); els.stage.classList.remove("drag"); });
-}
-els.stage.addEventListener("drop", (ev) => {
-  const f = ev.dataTransfer?.files?.[0];
-  if (f) openFile(f);
+// ---- ドラッグ&ドロップ: 画面のどこにドロップしても開く(ブラウザが、ファイルを直接開いてしまうのを防ぐ) ----
+const isDrawingName = (name) => /\.(jww|jwc|dxf)$/i.test(name);
+// ファイルそのもの、または、別の窓のエクスプローラーが渡すファイルのアドレス(text/uri-list)
+const hasFiles = (ev) => {
+  const types = [...(ev.dataTransfer?.types ?? [])];
+  return types.includes("Files") || types.includes("text/uri-list");
+};
+let dragDepth = 0;
+window.addEventListener("dragenter", (ev) => {
+  if (!hasFiles(ev)) return;
+  ev.preventDefault();
+  dragDepth += 1;
+  els.stage.classList.add("drag");
+});
+window.addEventListener("dragover", (ev) => {
+  if (!hasFiles(ev)) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", (ev) => {
+  if (!hasFiles(ev)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) els.stage.classList.remove("drag");
+});
+window.addEventListener("drop", (ev) => {
+  dragDepth = 0;
+  els.stage.classList.remove("drag");
+  if (!hasFiles(ev)) return; // ファイルでないもの(文字・リンクなど)は、ここでは扱わない
+  ev.preventDefault();
+  if (document.querySelector("dialog[open]")) return; // 開いているダイアログの操作中は、図面を切り替えない
+  const files = [...(ev.dataTransfer.files ?? [])];
+  const f = files.find((x) => isDrawingName(x.name));
+  if (!f && files.length === 0) {
+    // ファイルがなく、アドレスだけが落とされた(分割画面のエクスプローラーから)
+    const target = pickDrawingUrl(ev.dataTransfer.getData("text/uri-list"), EXPLORER_HOSTS);
+    if (!target) return; // 図面のアドレスではない(ふつうのリンクなど)。何もしない
+    setStatus(`エクスプローラーから「${target.name}」を取得しています…`);
+    fetchDrawing(target).then((file) => openFile(file), (err) => setStatus(err.message));
+    return;
+  }
+  if (!f) {
+    setStatus(files.length ? `「${files[0].name}」は開けません。開けるのは .jww / .jwc / .dxf です。` : "ファイルを受け取れませんでした。");
+    return;
+  }
+  if (files.length > 1) setStatus(`${files.length}個のファイルのうち、「${f.name}」を開きます(一度に開けるのは1つです)`);
+  openFile(f);
 });
 
 // ---- PWA: オフライン対応と、他のアプリからの「共有」受け取り ----

@@ -118,6 +118,8 @@ export function buildModel(dxf, header = null) {
       if (l.key !== null && (g.state === 0 || l.state === 0)) initiallyHidden.add(l.key);
     }
   }
+  // 凍結・オフにされたレイヤ(DXFで、表示しない指定のもの)も、最初から隠す
+  for (const l of dxf.layers ?? []) if (l.frozen) initiallyHidden.add(l.name);
   // Jw_cadの「書込レイヤ」(図形を描き足すときの、レイヤと色)
   const wgIdx = header?.write_layer_group;
   const wlIdx = header?.layer_groups?.[wgIdx]?.write_layer;
