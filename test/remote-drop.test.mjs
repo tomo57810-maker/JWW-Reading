@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchDrawing, pickDrawingUrl } from "../js/remote-drop.js";
+import { describePayload, fetchDrawing, pickDrawingUrl } from "../js/remote-drop.js";
 
 const HOSTS = ["i-sf.tailbc9241.ts.net"];
 const ID = "tDaZkaYPHaHZmyE18U2Etw";
@@ -38,4 +38,14 @@ test("図面の取得: 成功はFile、期限切れ・接続失敗・その他�
   await assert.rejects(fetchDrawing(target, async () => ({ ok: false, status: 403 })), /期限が切れた/);
   await assert.rejects(fetchDrawing(target, async () => { throw new TypeError("Failed to fetch"); }), /接続できません/);
   await assert.rejects(fetchDrawing(target, async () => ({ ok: false, status: 500 })), /500/);
+});
+
+test("ドロップされたもの: 文章の中・HTMLのリンクからも拾う。何が渡ったかを文章にする", () => {
+  assert.equal(pickDrawingUrl(`<a href="${good()}">図面</a>`, HOSTS).name, "テスト図 (1).jww");
+  assert.equal(pickDrawingUrl(`C:\a\b.jww\n${good()}`, HOSTS).name, "テスト図 (1).jww");
+  assert.equal(pickDrawingUrl("C:\a\b.jww", HOSTS), null);
+  const d = describePayload(["text/plain"], { "text/plain": "C:\a\n b.jww", "text/uri-list": "" });
+  assert.match(d, /text\/plain/);
+  assert.match(d, /C:\a b\.jww/);
+  assert.match(describePayload([], {}), /なし/);
 });

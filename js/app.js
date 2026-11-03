@@ -5,7 +5,7 @@ import { Viewer } from "./viewer.js";
 import { LayerPanel } from "./layer-panel.js";
 import { OneDriveDialog } from "./onedrive-dialog.js";
 import { CLIENT_ID, EXPLORER_HOSTS } from "./config.js";
-import { fetchDrawing, pickDrawingUrl } from "./remote-drop.js";
+import { describePayload, fetchDrawing, pickDrawingUrl } from "./remote-drop.js";
 import { setupTools } from "./app-tools.js";
 import { LocalAnnotationStorage, fingerprintOf, storageKey } from "./annotations.js";
 import { FileLibrary } from "./library.js";
@@ -214,8 +214,12 @@ els.theme.addEventListener("click", () => {
 const isDrawingName = (name) => /\.(jww|jwc|dxf)$/i.test(name);
 // ファイルそのもの、または、別の窓のエクスプローラーが渡すファイルのアドレス(text/uri-list)
 const hasFiles = (ev) => {
-  const types = [...(ev.dataTransfer?.types ?? [])];
-  return types.includes("Files") || types.includes("text/uri-list");
+  if (ev.target instanceof Element && ev.target.closest("input, textarea, [contenteditable]")) return false; // 入力欄への文字のドロップは、入力欄に任せる
+  return (ev.dataTransfer?.types?.length ?? 0) > 0;
+};
+const payloadTexts = (dt) => {
+  const get = (t) => { try { return dt.getData(t) || ""; } catch { return ""; } };
+  return { "text/uri-list": get("text/uri-list"), "text/plain": get("text/plain"), "text/html": get("text/html") };
 };
 let dragDepth = 0;
 window.addEventListener("dragenter", (ev) => {
@@ -223,6 +227,7 @@ window.addEventListener("dragenter", (ev) => {
   ev.preventDefault();
   dragDepth += 1;
   els.stage.classList.add("drag");
+  if (dragDepth === 1) setStatus(`ドラッグを検知しました(形式: ${[...ev.dataTransfer.types].join(", ")})`);
 });
 window.addEventListener("dragover", (ev) => {
   if (!hasFiles(ev)) return;
@@ -244,8 +249,12 @@ window.addEventListener("drop", (ev) => {
   const f = files.find((x) => isDrawingName(x.name));
   if (!f && files.length === 0) {
     // ファイルがなく、アドレスだけが落とされた(分割画面のエクスプローラーから)
-    const target = pickDrawingUrl(ev.dataTransfer.getData("text/uri-list"), EXPLORER_HOSTS);
-    if (!target) return; // 図面のアドレスではない(ふつうのリンクなど)。何もしない
+    const texts = payloadTexts(ev.dataTransfer);
+    const target = pickDrawingUrl(Object.values(texts).join(" "), EXPLORER_HOSTS);
+    if (!target) {
+      setStatus(`図面のアドレスではないため、開きません。${describePayload([...ev.dataTransfer.types], texts)}`);
+      return;
+    }
     setStatus(`エクスプローラーから「${target.name}」を取得しています…`);
     fetchDrawing(target).then((file) => openFile(file), (err) => setStatus(err.message));
     return;

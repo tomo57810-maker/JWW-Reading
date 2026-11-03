@@ -4,18 +4,20 @@
 
 const DRAWING_RE = /\.(jww|jwc|dxf)$/i;
 
-/** 落とされたアドレスの並び(text/uri-list)から、取りに行ってよい最初の図面のアドレスを選ぶ。なければ null。 */
-export function pickDrawingUrl(uriList, allowedHosts) {
-  for (const raw of String(uriList ?? "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line[0] === "#") continue;
+/**
+ * 落とされたもの(文字列。アドレスの並び・文章・HTMLのどれでもよい)から、取りに行ってよい最初の図面のアドレスを選ぶ。なければ null。
+ * 端末によって、どの形式でアドレスが渡るかが違うため、文字列の中のhttpsのアドレスを、すべて調べる。
+ */
+export function pickDrawingUrl(text, allowedHosts) {
+  const found = String(text ?? "").match(/https:\/\/[^\s"'<>]+/g) ?? [];
+  for (const line of found) {
     let u;
     try {
       u = new URL(line);
     } catch {
       continue;
     }
-    if (u.protocol !== "https:" || u.username || u.password) continue;
+    if (u.username || u.password) continue;
     if (!allowedHosts.includes(u.hostname.toLowerCase())) continue;
     const m = /^\/api\/dfile\/([A-Za-z0-9_-]{16,64})\/([^/]+)$/.exec(u.pathname);
     if (!m) continue;
@@ -30,6 +32,12 @@ export function pickDrawingUrl(uriList, allowedHosts) {
     return { url: `${u.origin}${u.pathname}`, name };
   }
   return null;
+}
+
+/** 何が渡されたかを、利用者(と開発者)が見て分かる短い文章にする。 */
+export function describePayload(types, texts) {
+  const parts = Object.entries(texts).filter(([, v]) => v).map(([k, v]) => `${k}=「${String(v).replace(/\s+/g, " ").slice(0, 100)}」`);
+  return `受け取った形式: ${types.length ? types.join(", ") : "なし"}${parts.length ? " / " + parts.join(" ") : ""}`;
 }
 
 /** 図面のアドレスから、Fileを作る。失敗は、利用者向けの文章の Error にする。 */
