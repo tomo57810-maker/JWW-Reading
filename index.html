@@ -225,6 +225,16 @@
     </form>
   </dialog>
 
+  <dialog id="choice" class="od">
+    <form method="dialog" class="od-body">
+      <strong id="choice-title">どうしますか</strong>
+      <p id="choice-note" class="note"></p>
+      <label id="choice-factor-row" class="opt" hidden>図形として取り込むときの倍率 <input id="choice-factor" class="search" type="number" inputmode="decimal" step="any" min="0.001" value="1" style="width:6em"> 倍(元の縮尺と違うとき。取り込んだあとも、拡大縮小できます)</label>
+      <label id="choice-one-row" class="opt" hidden><input id="choice-one" type="checkbox" checked> 1つのPDFにまとめる(1図面=1ページ)</label>
+      <div class="row" id="choice-buttons"></div>
+    </form>
+  </dialog>
+
   <dialog id="ex" class="od">
     <div class="od-head">
       <strong>書き出し・注釈の管理</strong>
@@ -238,6 +248,12 @@
       <hr>
       <p class="note">図面の図形(描き足した線・文字、移動・削除などの編集を反映したもの)を、DXFファイルにします。Jw_cadなどで開けます。コメント・寸法などの注釈は含まれません。</p>
       <button id="ex-dxf" class="btn" type="button">DXFにする(図形の編集を反映)</button>
+      <hr>
+      <p class="note">複数の図面(JWW・JWC・DXF)を、順にPDFにします。開いている図面とは関係なく、各ファイルの原本をそのまま(Jw_cadで非表示のレイヤは除く)PDFにします。注釈・図形の編集は含みません。図面を複数まとめて画面へドラッグしても、同じことができます。</p>
+      <label class="btn primary" for="ex-batch-file">複数の図面を選んでPDFにする</label>
+      <input id="ex-batch-file" type="file" multiple accept=".jww,.jwc,.dxf,application/octet-stream" hidden>
+      <label class="opt"><input id="ex-batch-one" type="checkbox" checked> 1つのPDFにまとめる(1図面=1ページ。外すと、図面ごとのPDF)</label>
+      <label class="opt"><input id="ex-batch-hi" type="checkbox"> 高画質(大きい)</label>
       <hr>
       <p class="note">注釈だけを、ファイル(JSON)として保存・読み込みできます。端末にも自動で保存されます。</p>
       <button id="ex-json" class="btn" type="button">注釈をファイルに保存</button>

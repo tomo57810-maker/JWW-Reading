@@ -7,6 +7,8 @@ import { aciToCss } from "./aci.js";
 import { EditStore } from "./edits.js";
 import { ObjectTool } from "./object-tool.js";
 import { makeJpegPdf } from "./pdf.js";
+import { batchToPdf } from "./batch-pdf.js";
+import { prepareFigure } from "./figure-import.js";
 import { buildDxf } from "./dxf-export.js";
 import { PartStore, PART_KINDS, buildScene, describePart, isPartSource } from "./parts3d.js";
 import { View3D } from "./view3d.js";
@@ -634,6 +636,52 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     }
   }
 
+  /** 複数の図面を、順にPDFにする(注釈・編集は含まない)。report は、経過と結果を出す関数。 */
+  let batching = false;
+  async function batchPdf(files, { onePdf = true, hi = false, report = (t) => { el.exMsg.textContent = t; } } = {}) {
+    if (batching) {
+      report("まとめて書き出している最中です。終わってから、もう一度お試しください");
+      return;
+    }
+    batching = true;
+    try {
+      const r = await batchToPdf(files, { onePdf, longSidePx: hi ? 7000 : 4000, onProgress: (done, total, name) => report(`PDFにしています… ${Math.min(done + 1, total)}/${total} 「${name}」`) });
+      for (const o of r.outputs) {
+        deliver(o.blob, o.name);
+        await new Promise((res) => setTimeout(res, 400)); // 続けて保存するとき、ブラウザが取りこぼさないよう間を空ける
+      }
+      const bad = r.failed.length ? `。作れなかった図面 ${r.failed.length}件: ${r.failed.map((f) => `${f.name}(${f.reason})`).join("、")}` : "";
+      report(r.outputs.length ? `PDFを保存しました(${r.pages}図面${onePdf ? "を1つのPDFに" : "を、図面ごとのPDFに"})${bad}` : `PDFを作れませんでした${bad}`);
+    } catch (err) {
+      report(`PDFを作れませんでした: ${err?.message ?? err}`);
+    } finally {
+      batching = false;
+    }
+  }
+  $("ex-batch-file").addEventListener("change", (ev) => {
+    const files = [...ev.target.files];
+    ev.target.value = "";
+    if (files.length) batchPdf(files, { onePdf: $("ex-batch-one").checked, hi: $("ex-batch-hi").checked });
+  });
+
+  /**
+   * 別の図面(トイレなどの図形)の図形を、開いている図面へ取り込み、選んだ状態にする(動かす・回す・拡大するは、すぐできる)。
+   * fig: 取り込み元のモデル、at: 置く位置(用紙mm)、factor: 倍率
+   */
+  function importFigure(fig, { at, factor = 1 }) {
+    if (!edits) return { ok: false, reason: "図面が開かれていません" };
+    const host = getModel();
+    const layer = host?.writeLayer?.key ?? host?.groups?.[0]?.layers?.[0]?.key;
+    const r = prepareFigure(fig.entities, { target: at, factor, layer });
+    if (!r.entities.length) return { ok: false, reason: r.skipped ? "取り込める図形(線・円・円弧・文字・点・塗り)がありません" : "図形がありません" };
+    tools.setMode("select");
+    const before = edits.entities.length;
+    objectTool.addEntities(r.entities);
+    if (layer !== undefined) ensureLayerVisible(layer); // 取り込んだ図形が、隠れたレイヤに入って見えなくならないようにする
+    objectTool.select(r.entities.map((_, k) => before + k));
+    return { ok: true, count: r.entities.length, skipped: r.skipped, layer };
+  }
+
   async function exportDxf() {
     if (!edits || !sourceBytes) return;
     if (sourceIsDxf) {
@@ -752,6 +800,8 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   return {
     store,
     tools,
+    batchPdf,
+    importFigure,
     get dirty() {
       return isDirty();
     },

@@ -1,6 +1,6 @@
-import { init, readDrawing, readHeader } from "../vendor/ezjww.mjs";
-import { decodeDxf, isBinaryDxf, looksLikeDxf, readDxfDrawing } from "./dxf-import.js";
-import { buildModel, explainNotDrawing } from "./drawing.js";
+import { init } from "../vendor/ezjww.mjs";
+import { DRAWING_NAME_RE, loadModel } from "./load-drawing.js";
+import { explainNotDrawing } from "./drawing.js";
 import { Viewer } from "./viewer.js";
 import { LayerPanel } from "./layer-panel.js";
 import { OneDriveDialog } from "./onedrive-dialog.js";
@@ -66,19 +66,6 @@ function setStatus(text) {
   els.status.textContent = text;
 }
 
-/** DXFを、JWWと同じ画面用モデルにする(Jw_cadのレイヤグループはないので、すべてのレイヤを1グループにまとめる)。 */
-function modelFromDxf(bytes) {
-  const dxf = readDxfDrawing(decodeDxf(bytes));
-  const model = buildModel(dxf, null);
-  model.source = "dxf";
-  model.unitScale = dxf.unitScale;
-  model.unsupportedTypes = dxf.unsupportedTypes;
-  const keys = model.groups.flatMap((g) => g.layers.map((l) => l.key));
-  const wk = keys.includes("0") ? "0" : keys[0];
-  model.writeLayer = wk === undefined ? null : { key: wk, color: 7 }; // 描き足す図形の、レイヤと色
-  return model;
-}
-
 async function openFile(file, { fromLibrary = false } = {}) {
   els.busy.hidden = false;
   try {
@@ -90,12 +77,7 @@ async function openFile(file, { fromLibrary = false } = {}) {
       return;
     }
     const t0 = performance.now();
-    const isDxf = /\.dxf$/i.test(file.name) || looksLikeDxf(bytes);
-    if (isDxf && isBinaryDxf(bytes)) {
-      setStatus("バイナリ形式のDXFは開けません。CADで「ASCII形式のDXF」として保存し直してください。");
-      return;
-    }
-    const model = isDxf ? modelFromDxf(bytes) : buildModel(readDrawing(bytes), readHeader(bytes));
+    const { model, isDxf } = await loadModel(file.name, bytes);
     const ms = Math.round(performance.now() - t0);
     const key = storageKey(await fingerprintOf(file.name, bytes));
     saveView(); // 開いていた図面の表示位置を、切り替える前に残す
@@ -211,7 +193,6 @@ els.theme.addEventListener("click", () => {
 });
 
 // ---- ドラッグ&ドロップ: 画面のどこにドロップしても開く(ブラウザが、ファイルを直接開いてしまうのを防ぐ) ----
-const isDrawingName = (name) => /\.(jww|jwc|dxf)$/i.test(name);
 // ファイルそのもの、または、別の窓のエクスプローラーが渡すファイルのアドレス(text/uri-list)
 const hasFiles = (ev) => {
   if (ev.target instanceof Element && ev.target.closest("input, textarea, [contenteditable]")) return false; // 入力欄への文字のドロップは、入力欄に任せる
@@ -246,8 +227,8 @@ window.addEventListener("drop", (ev) => {
   ev.preventDefault();
   if (document.querySelector("dialog[open]")) return; // 開いているダイアログの操作中は、図面を切り替えない
   const files = [...(ev.dataTransfer.files ?? [])];
-  const f = files.find((x) => isDrawingName(x.name));
-  if (!f && files.length === 0) {
+  const pos = { clientX: ev.clientX, clientY: ev.clientY };
+  if (files.length === 0) {
     // ファイルがなく、アドレスだけが落とされた(分割画面のエクスプローラーから)
     const texts = payloadTexts(ev.dataTransfer);
     const target = pickDrawingUrl(Object.values(texts).join(" "), EXPLORER_HOSTS);
@@ -256,16 +237,97 @@ window.addEventListener("drop", (ev) => {
       return;
     }
     setStatus(`エクスプローラーから「${target.name}」を取得しています…`);
-    fetchDrawing(target).then((file) => openFile(file), (err) => setStatus(err.message));
+    fetchDrawing(target).then((file) => handleIncoming([file], pos), (err) => setStatus(err.message));
     return;
   }
-  if (!f) {
+  handleIncoming(files, pos);
+});
+
+/** 選択のダイアログ。押したボタンの value(やめたときは null)と、倍率・「まとめる」の入力を返す。 */
+function askChoice({ title, note, buttons, factor = false, one = false }) {
+  const dlg = $("choice");
+  $("choice-title").textContent = title;
+  $("choice-note").textContent = note;
+  $("choice-factor-row").hidden = !factor;
+  $("choice-one-row").hidden = !one;
+  const row = $("choice-buttons");
+  row.replaceChildren(
+    ...buttons.map((b) => {
+      const btn = document.createElement("button");
+      btn.className = `btn${b.primary ? " primary" : ""}`;
+      btn.value = b.value ?? "";
+      btn.textContent = b.label;
+      if (b.value === null) btn.formNoValidate = true;
+      return btn;
+    })
+  );
+  dlg.returnValue = "";
+  return new Promise((resolve) => {
+    dlg.addEventListener(
+      "close",
+      () => {
+        const f = Number.parseFloat($("choice-factor").value);
+        resolve({ value: dlg.returnValue || null, factor: f > 0 ? f : 1, one: $("choice-one").checked });
+      },
+      { once: true }
+    );
+    dlg.showModal();
+  });
+}
+
+/** 画面の位置(ドロップした場所)を、図面の座標(用紙mm)にする。画面の外なら、表示の中心。 */
+function worldAt(pos) {
+  const r = els.canvas.getBoundingClientRect();
+  const inside = pos && pos.clientX >= r.left && pos.clientX <= r.right && pos.clientY >= r.top && pos.clientY <= r.bottom;
+  return viewer.toWorld(inside ? pos.clientX - r.left : r.width / 2, inside ? pos.clientY - r.top : r.height / 2);
+}
+
+/** 渡されたファイルを、図面として開くか、図形として取り込むか、まとめてPDFにするか。 */
+async function handleIncoming(files, pos) {
+  const drawings = files.filter((f) => DRAWING_NAME_RE.test(f.name));
+  if (drawings.length === 0) {
     setStatus(files.length ? `「${files[0].name}」は開けません。開けるのは .jww / .jwc / .dxf です。` : "ファイルを受け取れませんでした。");
     return;
   }
-  if (files.length > 1) setStatus(`${files.length}個のファイルのうち、「${f.name}」を開きます(一度に開けるのは1つです)`);
-  openFile(f);
-});
+  if (drawings.length >= 2) {
+    const r = await askChoice({
+      title: `${drawings.length}個の図面が渡されました`,
+      note: "順にPDFにするか、先頭の1つだけを図面として開くかを選んでください。PDFには、注釈・図形の編集は含まれません。",
+      one: true,
+      buttons: [{ label: "順にPDFにする", value: "pdf", primary: true }, { label: "先頭の1つを図面として開く", value: "open" }, { label: "やめる", value: null }],
+    });
+    if (r.value === "pdf") toolkit.batchPdf(drawings, { onePdf: r.one, report: setStatus });
+    else if (r.value === "open") openFile(drawings[0]);
+    return;
+  }
+  const f = drawings[0];
+  if (!state.model) {
+    openFile(f);
+    return;
+  }
+  const r = await askChoice({
+    title: `「${f.name}」をどうしますか`,
+    note: `いま開いている図面「${state.fileName}」があります。別の図面として開くと、いまの図面は閉じます(保存していない作業は、「下書き」として残ります)。図形として取り込むと、いまの図面に、この中の図形が入ります(書込レイヤに入り、選んだ状態になります)。`,
+    factor: true,
+    buttons: [{ label: "図形として取り込む", value: "figure", primary: true }, { label: "図面として開く", value: "open" }, { label: "やめる", value: null }],
+  });
+  if (r.value === "open") {
+    openFile(f);
+    return;
+  }
+  if (r.value !== "figure") return;
+  els.busy.hidden = false;
+  try {
+    const { model } = await loadModel(f.name, new Uint8Array(await f.arrayBuffer()));
+    const res = toolkit.importFigure(model, { at: worldAt(pos), factor: r.factor });
+    if (!res.ok) setStatus(`取り込めませんでした: ${res.reason}`);
+    else setStatus(`「${f.name}」の図形 ${res.count.toLocaleString()}個を取り込みました(倍率 ${r.factor}${res.skipped ? ` / 取り込めない種類の図形 ${res.skipped}個は除きました` : ""})。ドラッグで動かせます。「戻す」で取り消せます`);
+  } catch (err) {
+    setStatus(`取り込めませんでした: ${err?.message ?? err}`);
+  } finally {
+    els.busy.hidden = true;
+  }
+}
 
 // ---- PWA: オフライン対応と、他のアプリからの「共有」受け取り ----
 const SHARED_CACHE = "jww-reading-shared";
