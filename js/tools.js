@@ -102,6 +102,11 @@ export class ToolController {
     return true;
   }
 
+  /** 指で点を置くモードか(測定・作図)。2本指の操作の前後の、うっかりタップを防ぐ処理の対象。 */
+  get placesPoints() {
+    return ["dim", "area", "route", "wall", "mark", "line", "rect", "circle", "arrow", "ctext"].includes(this.mode);
+  }
+
   /** 2本目の指が触れたとき: 書きかけの赤ペンの線や、注釈の移動だけをやめる。点を置いた作図中の線は残す。 */
   abort() {
     if (this.sub) {

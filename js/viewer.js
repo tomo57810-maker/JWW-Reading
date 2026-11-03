@@ -7,6 +7,9 @@ const MIN_LINE_PX = 0.8; // どこまで拡大縮小しても、線はこの太�
 const MIN_TEXT_PX = 3.5; // これより小さい文字は描かない
 const MAX_ZOOM_OVER_FIT = 400;
 
+const TOUCH_PLACE_DELAY_MS = 120; // 点を置くモードで、指を離してから点を置くまでの待ち(2本目の指が来るかを見る)
+const MULTI_TOUCH_GUARD_MS = 300; // 2本指の操作の直後、この間に触れた1本目の指は、ツールに渡さない
+
 export class Viewer {
   constructor(canvas, onChange = () => {}) {
     this.canvas = canvas;
@@ -26,6 +29,8 @@ export class Viewer {
     this.raf = 0;
     this.tool = null; // 注釈・測定のツール(down/move/up/cancel/hover を持つ)。nullなら、指で動かすだけ
     this.toolPointerId = null;
+    this.pendingUp = null; // 指を離したあと、点を置くのを少し待っているもの
+    this.multiAt = -Infinity; // 2本以上の指が触れていた、いちばん新しい時刻
     this.overlay = null; // 図面の上に、注釈などを描く関数 ({ ctx, view, dpr, width, height }) => void
     this.#bindEvents();
     new ResizeObserver(() => this.#resize()).observe(canvas);
@@ -349,17 +354,31 @@ export class Viewer {
       return { x: ev.clientX - r.left, y: ev.clientY - r.top };
     };
     const toolPoint = (p) => ({ sx: p.x, sy: p.y, world: this.toWorld(p.x, p.y) });
+    // 点を置くモード(測定・作図)で、2本指の操作の前後に、うっかり点が打たれるのを防ぐ。
+    //  ・指を離しても、すぐには点を置かない(少し待ち、その間に2本目の指が触れたら、置かない)
+    //  ・2本指の操作の直後に触れた1本目の指は、ツールに渡さない(指を持ち替えた、とみなす)
+    const placing = () => Boolean(this.tool?.placesPoints);
+    const cancelPendingUp = () => {
+      if (!this.pendingUp) return false;
+      clearTimeout(this.pendingUp.timer);
+      this.pendingUp = null;
+      return true;
+    };
     c.addEventListener("pointerdown", (ev) => {
       c.setPointerCapture(ev.pointerId);
+      const now = performance.now();
       const p = local(ev);
       this.pointers.set(ev.pointerId, p);
-      if (this.tool && this.pointers.size === 1) {
+      if (this.pointers.size >= 2) this.multiAt = now;
+      if (this.pointers.size >= 2 && (cancelPendingUp() || this.toolPointerId !== null)) {
+        this.tool?.abort?.();
+        this.toolPointerId = null;
+        this.#schedule();
+      } else if (this.tool && this.pointers.size === 1) {
+        if (ev.pointerType === "touch" && placing() && now - this.multiAt < MULTI_TOUCH_GUARD_MS) return; // 2本指の直後の、持ち替え
         this.toolPointerId = ev.pointerId;
         this.tool.down(toolPoint(p));
         this.#schedule();
-      } else if (this.pointers.size >= 2 && this.toolPointerId !== null) {
-        this.tool?.abort?.();
-        this.toolPointerId = null;
       }
     });
     c.addEventListener("pointermove", (ev) => {
@@ -378,6 +397,7 @@ export class Viewer {
       if (this.pointers.size === 1 && !this.tool) {
         this.view = { ...this.view, tx: this.view.tx + cur.x - prev.x, ty: this.view.ty + cur.y - prev.y };
       } else if (this.pointers.size === 2) {
+        this.multiAt = performance.now();
         const other = [...this.pointers.entries()].find(([id]) => id !== ev.pointerId)[1];
         const d0 = Math.hypot(prev.x - other.x, prev.y - other.y);
         const d1 = Math.hypot(cur.x - other.x, cur.y - other.y);
@@ -391,10 +411,20 @@ export class Viewer {
     });
     const end = (ev, cancelled) => {
       const p = local(ev);
+      if (this.pointers.size >= 2) this.multiAt = performance.now(); // 2本指の操作が終わった時刻
       if (ev.pointerId === this.toolPointerId) {
         this.toolPointerId = null;
         if (cancelled) this.tool?.abort?.();
-        else this.tool?.up(toolPoint(p));
+        else if (ev.pointerType === "touch" && placing()) {
+          // すぐには置かず、少し待つ。その間に2本目の指が触れたら、2本指の操作とみなして、置かない
+          const tool = this.tool;
+          const timer = setTimeout(() => {
+            this.pendingUp = null;
+            tool.up(toolPoint(p));
+            this.#schedule();
+          }, TOUCH_PLACE_DELAY_MS);
+          this.pendingUp = { timer };
+        } else this.tool?.up(toolPoint(p));
         this.#schedule();
       }
       this.pointers.delete(ev.pointerId);
