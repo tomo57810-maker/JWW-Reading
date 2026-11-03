@@ -30,6 +30,14 @@ const layerPanel = new LayerPanel({
     viewer.setHiddenLayers(hidden);
     scheduleViewSave();
   },
+  // 「書込」を押したレイヤが、以後に描き足す図形・取り込む図形の入れ先になる
+  onWrite: (layer) => {
+    if (!state.model || layer.key === null) return;
+    state.model.writeLayer = { key: layer.key, color: layer.color ?? 7 };
+    layerPanel.show(layer.key); // 隠れているレイヤなら、表示にする
+    scheduleViewSave();
+    setStatus(`書込レイヤを「${layer.label} ${layer.name || "(名前なし)"}」にしました`);
+  },
 });
 const toolkit = setupTools({
   viewer,
@@ -49,7 +57,7 @@ function scheduleViewSave() {
 function saveView() {
   if (!state.key || !state.model) return;
   const { s, tx, ty } = viewer.view;
-  storage.set(`view:${state.key}`, { s, tx, ty, hidden: [...layerPanel.hidden] }, "meta");
+  storage.set(`view:${state.key}`, { s, tx, ty, hidden: [...layerPanel.hidden], write: state.model.writeLayer?.key ?? null }, "meta");
 }
 viewer.onChange = () => scheduleViewSave();
 document.addEventListener("visibilitychange", () => {
@@ -89,6 +97,11 @@ async function openFile(file, { fromLibrary = false } = {}) {
     layerPanel.setModel(model);
     // 前回の、隠したレイヤと表示位置を呼び戻す
     const view = await storage.get(`view:${key}`, "meta");
+    // 前回の書込レイヤ(いまもあるレイヤなら)
+    if (view?.write && model.groups.some((g) => g.layers.some((l) => l.key === view.write))) {
+      const wl = model.groups.flatMap((g) => g.layers).find((l) => l.key === view.write);
+      model.writeLayer = { key: wl.key, color: wl.color ?? model.writeLayer?.color ?? 7 };
+    }
     if (view?.hidden) layerPanel.setHidden(view.hidden.filter((k) => model.groups.some((g) => g.layers.some((l) => l.key === k))));
     viewer.setModel(model, new Set(layerPanel.hidden));
     els.name.textContent = file.name;
@@ -282,6 +295,13 @@ function worldAt(pos) {
   return viewer.toWorld(inside ? pos.clientX - r.left : r.width / 2, inside ? pos.clientY - r.top : r.height / 2);
 }
 
+/** いまの書込レイヤの名前(選択のダイアログの説明用)。 */
+function writeLayerName() {
+  const w = state.model?.writeLayer;
+  const l = w && state.model.groups.flatMap((g) => g.layers).find((x) => x.key === w.key);
+  return l ? `${l.label} ${l.name || "(名前なし)"}`.trim() : "先頭のレイヤ";
+}
+
 /** 渡されたファイルを、図面として開くか、図形として取り込むか、まとめてPDFにするか。 */
 async function handleIncoming(files, pos) {
   const drawings = files.filter((f) => DRAWING_NAME_RE.test(f.name));
@@ -307,7 +327,7 @@ async function handleIncoming(files, pos) {
   }
   const r = await askChoice({
     title: `「${f.name}」をどうしますか`,
-    note: `いま開いている図面「${state.fileName}」があります。別の図面として開くと、いまの図面は閉じます(保存していない作業は、「下書き」として残ります)。図形として取り込むと、いまの図面に、この中の図形が入ります(書込レイヤに入り、選んだ状態になります)。`,
+    note: `いま開いている図面「${state.fileName}」があります。別の図面として開くと、いまの図面は閉じます(保存していない作業は、「下書き」として残ります)。図形として取り込むと、いまの図面に、この中の図形が入ります(いまの書込レイヤ「${writeLayerName()}」に入り、選んだ状態になります。入れ先を変えるときは、「レイヤ」の一覧で、レイヤの「書込」を押してから、もう一度ドラッグしてください)。`,
     factor: true,
     buttons: [{ label: "図形として取り込む", value: "figure", primary: true }, { label: "図面として開く", value: "open" }, { label: "やめる", value: null }],
   });
@@ -321,7 +341,7 @@ async function handleIncoming(files, pos) {
     const { model } = await loadModel(f.name, new Uint8Array(await f.arrayBuffer()));
     const res = toolkit.importFigure(model, { at: worldAt(pos), factor: r.factor });
     if (!res.ok) setStatus(`取り込めませんでした: ${res.reason}`);
-    else setStatus(`「${f.name}」の図形 ${res.count.toLocaleString()}個を取り込みました(倍率 ${r.factor}${res.skipped ? ` / 取り込めない種類の図形 ${res.skipped}個は除きました` : ""})。ドラッグで動かせます。「戻す」で取り消せます`);
+    else setStatus(`「${f.name}」の図形 ${res.count.toLocaleString()}個を取り込みました(入れ先: ${writeLayerName()} / 倍率 ${r.factor}${res.skipped ? ` / 取り込めない種類の図形 ${res.skipped}個は除きました` : ""})。ドラッグで動かせます。「戻す」で取り消せます`);
   } catch (err) {
     setStatus(`取り込めませんでした: ${err?.message ?? err}`);
   } finally {

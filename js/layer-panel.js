@@ -4,11 +4,12 @@ export class LayerPanel {
   /**
    * @param {{ list: HTMLElement, search: HTMLInputElement, showEmpty: HTMLInputElement, onChange: (hidden: Set<string>) => void }} opts
    */
-  constructor({ list, search, showEmpty, onChange }) {
+  constructor({ list, search, showEmpty, onChange, onWrite = () => {} }) {
     this.list = list;
     this.search = search;
     this.showEmpty = showEmpty;
     this.onChange = onChange;
+    this.onWrite = onWrite; // 「書込」を押したレイヤ(描き足す図形・取り込む図形の入れ先)を知らせる
     this.model = null;
     this.hidden = new Set();
     this.open = new Set(); // 開いているグループ番号
@@ -129,9 +130,17 @@ export class LayerPanel {
       n.textContent = l.count.toLocaleString();
       label.append(box, tag, lname, n);
       if (l.count === 0) item.className = "empty-layer";
-      item.append(label);
+      // 書込レイヤ(Jw_cadと同じく、図形を描き足す・取り込む先)にするボタン
+      const write = document.createElement("button");
+      write.type = "button";
+      write.className = "lwrite";
+      write.addEventListener("click", () => {
+        this.onWrite(l);
+        this.#sync();
+      });
+      item.append(label, write);
       ul.append(item);
-      layerBoxes.push({ box, layer: l });
+      layerBoxes.push({ box, layer: l, write });
     }
     details.append(summary, ul);
     li.append(details);
@@ -142,7 +151,15 @@ export class LayerPanel {
   /** チェックの状態と、グループの「表示中 n/m」を現在の表示設定に合わせる。 */
   #sync() {
     for (const { group, groupBox, summaryCount, layerBoxes } of this.rows) {
-      for (const { box, layer } of layerBoxes) box.checked = !this.hidden.has(layer.key);
+      const writeKey = this.model?.writeLayer?.key ?? null;
+      for (const { box, layer, write } of layerBoxes) {
+        box.checked = !this.hidden.has(layer.key);
+        const on = layer.key === writeKey;
+        write.textContent = on ? "● 書込" : "○";
+        write.classList.toggle("on", on);
+        write.title = on ? "いまの書込レイヤ(描き足す図形・取り込む図形は、ここに入ります)" : "このレイヤを書込レイヤにする";
+        write.setAttribute("aria-pressed", String(on));
+      }
       const withShapes = group.layers.filter((l) => l.key !== null && l.count > 0);
       const shown = withShapes.filter((l) => !this.hidden.has(l.key)).length;
       groupBox.checked = withShapes.length > 0 && shown === withShapes.length;
