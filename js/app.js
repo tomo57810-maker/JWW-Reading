@@ -3,6 +3,7 @@ import { DRAWING_NAME_RE, loadModel } from "./load-drawing.js";
 import { explainNotDrawing } from "./drawing.js";
 import { Viewer } from "./viewer.js";
 import { LayerPanel } from "./layer-panel.js";
+import { LayerBar } from "./layer-bar.js";
 import { OneDriveDialog } from "./onedrive-dialog.js";
 import { CLIENT_ID, EXPLORER_HOSTS } from "./config.js";
 import { describePayload, fetchDrawing, pickDrawingUrl } from "./remote-drop.js";
@@ -29,16 +30,51 @@ const layerPanel = new LayerPanel({
   onChange: (hidden) => {
     viewer.setHiddenLayers(hidden);
     scheduleViewSave();
+    layerBar.refresh();
   },
   // 「書込」を押したレイヤが、以後に描き足す図形・取り込む図形の入れ先になる
-  onWrite: (layer) => {
-    if (!state.model || layer.key === null) return;
-    state.model.writeLayer = { key: layer.key, color: layer.color ?? 7 };
-    layerPanel.show(layer.key); // 隠れているレイヤなら、表示にする
-    scheduleViewSave();
-    setStatus(`書込レイヤを「${layer.label} ${layer.name || "(名前なし)"}」にしました`);
-  },
+  onWrite: (layer) => setWriteLayer(layer),
 });
+
+/** 書込レイヤ(描き足す図形・取り込む図形の入れ先)を変える。レイヤ一覧・レイヤバーの両方から使う。 */
+function setWriteLayer(layer, group = null) {
+  if (!state.model || layer.key === null) return;
+  state.model.writeLayer = { key: layer.key, color: layer.color ?? 7 };
+  state.model.writeGroup = group?.index ?? layer.group ?? state.model.writeGroup;
+  layerPanel.show(layer.key); // 隠れているレイヤなら、表示にする
+  layerPanel.render();
+  layerBar.refresh();
+  updateWriteChip();
+  scheduleViewSave();
+  setStatus(`書込レイヤを「${layer.label} ${layer.name || "(名前なし)"}」にしました`);
+}
+
+// ---- 右のレイヤバー(Jw_cadと同じ 0〜F)と、ステータスバーの書込レイヤ ----
+const layerBar = new LayerBar({
+  root: $("lbar"),
+  getModel: () => state.model,
+  getHidden: () => layerPanel.hidden,
+  setVisible: (keys, visible) => {
+    const h = new Set(layerPanel.hidden);
+    for (const k of keys) visible ? h.delete(k) : h.add(k);
+    layerPanel.setHidden([...h]);
+  },
+  setWrite: (layer, group) => setWriteLayer(layer, group),
+  openList: () => { els.panel.hidden = false; },
+});
+const wlChip = $("wl-chip");
+function updateWriteChip() {
+  const w = state.model?.writeLayer;
+  const l = w && state.model.groups.flatMap((g) => g.layers).find((x) => x.key === w.key);
+  wlChip.textContent = l ? `[${l.label || "書込"}] ${l.name || ""}`.trim() : "[書込なし]";
+}
+wlChip.addEventListener("click", () => { els.panel.hidden = !els.panel.hidden; });
+const lbarToggle = $("lbar-toggle");
+lbarToggle.addEventListener("click", () => {
+  const on = document.querySelector(".work").classList.toggle("lbar-on");
+  lbarToggle.setAttribute("aria-pressed", String(on));
+});
+
 const toolkit = setupTools({
   viewer,
   getModel: () => state.model,
@@ -60,6 +96,7 @@ function saveView() {
   storage.set(`view:${state.key}`, { s, tx, ty, hidden: [...layerPanel.hidden], write: state.model.writeLayer?.key ?? null }, "meta");
 }
 viewer.onChange = () => scheduleViewSave();
+viewer.onLongPress = () => setStatus("長押し: 自由点(吸着しません)。指を離すと、その位置に点を指示します");
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) saveView();
 });
@@ -112,6 +149,10 @@ async function openFile(file, { fromLibrary = false } = {}) {
       viewer.redraw();
     }
     els.empty.hidden = true;
+    $("sb-tools").hidden = false;
+    layerPanel.render(); // 書込レイヤの印を、呼び戻した書込レイヤに合わせる
+    layerBar.refresh();
+    updateWriteChip();
     els.fit.disabled = false;
     els.layersBtn.disabled = false;
     const unsupportedKinds = model.unsupportedTypes?.length ? `(${model.unsupportedTypes.join("・")})` : "";

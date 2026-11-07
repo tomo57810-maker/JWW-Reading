@@ -102,14 +102,115 @@ body {
 }
 .stage.drag { outline: 3px dashed var(--accent); outline-offset: -6px; }
 
-.status {
-  padding: 4px 16px;
-  padding-bottom: max(4px, env(safe-area-inset-bottom));
+/* ---- Jw_cad式の配置: 上=コントロールバー、左=ツールバー、右=レイヤバー、下=ステータスバー ---- */
+.work { position: relative; flex: 1; min-height: 0; display: flex; }
+.work > .stage { flex: 1; min-width: 0; }
+/* コントロールバー: Jw_cadと同じく、高さ一定の1行(選択肢やボタンが出ても、図面の表示域が動かない)。はみ出す分は横にスクロール */
+.ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 46px;
+  padding: 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.ctrl::-webkit-scrollbar { display: none; }
+.ctrl > .tool-row { flex: none; overflow: visible; }
+.ctrl > .tool-row:last-child { flex: 1 0 auto; min-width: 0; }
+.ctrl .hint { flex: 1 0 auto; min-width: 8em; max-width: none; white-space: nowrap; }
+.tools {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 96px;
+  padding: 6px;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+.tools .tool { flex: none; min-height: 40px; padding: 0 8px; text-align: left; font-size: 13px; white-space: nowrap; }
+.tb-sec { margin: 6px 2px 0; color: var(--muted); font-size: 11px; }
+.tb-sec:first-child { margin-top: 0; }
+.lbar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 86px;
+  padding: 6px;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+.lb-jw { display: flex; flex-direction: column; gap: 4px; }
+.lb-head { color: var(--muted); font-size: 11px; }
+.lb-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3px; }
+.lb-btn {
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.lb-btn.lb-empty { font-weight: 400; color: var(--muted); }
+.lb-btn.lb-off { color: var(--muted); background: var(--bg); text-decoration: line-through; opacity: 0.6; }
+.lb-btn.lb-w { border: 2px solid var(--accent); color: var(--accent); border-radius: 999px; opacity: 1; text-decoration: none; }
+.lb-btn:disabled { opacity: 0.2; cursor: default; }
+.lb-wide { width: 100%; font-weight: 400; font-size: 13px; }
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 3px 8px;
+  padding-bottom: max(3px, env(safe-area-inset-bottom));
   background: var(--surface);
   border-top: 1px solid var(--line);
+}
+.statusbar .msg {
+  flex: 1;
+  min-width: 0;
   color: var(--muted);
   font-size: 12px;
-  min-height: 28px;
+  line-height: 1.4;
+  height: 2.8em; /* 案内の行数が変わっても、図面の表示域の高さを変えない(図面が上下に動かないように) */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.sb-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+.sb-only-narrow { display: none !important; }
+/* 携帯(幅が狭い画面): ツールバーを細く、レイヤバーは「レイヤ」ボタンで出す */
+@media (max-width: 700px) {
+  .tools { width: 62px; padding: 4px; }
+  .tools .tool { min-height: 44px; padding: 2px; font-size: 11px; line-height: 1.2; text-align: center; white-space: normal; }
+  .tb-sec { display: none; }
+  .lbar { position: absolute; top: 0; right: 0; bottom: 0; z-index: 5; box-shadow: -4px 0 16px rgba(0, 0, 0, 0.18); }
+  .work:not(.lbar-on) .lbar { display: none; }
+  .sb-only-narrow { display: inline-flex !important; }
+  .statusbar { flex-wrap: wrap; }
+  .statusbar .msg { flex-basis: 100%; }
+  .sb-tools { flex: 1; justify-content: flex-end; }
+  .bar { gap: 4px; padding: 4px 8px; padding-top: max(4px, env(safe-area-inset-top)); }
+  .bar .btn { min-height: 36px; padding: 0 9px; font-size: 13px; }
+  .bar .name { font-size: 12px; }
 }
 
 .panel {
@@ -218,7 +319,6 @@ body {
 .od-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .od-icon { flex: none; }
 
-.tools { background: var(--surface); border-top: 1px solid var(--line); padding: 6px 8px; }
 .tool-row { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .tool-row::-webkit-scrollbar { display: none; }
 .tool-row.sub { margin-top: 6px; }

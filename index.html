@@ -18,34 +18,15 @@
     <span id="name" class="name">図面が開かれていません</span>
     <button id="recent-btn" class="btn" type="button">最近</button>
     <button id="od-btn" class="btn" type="button">OneDrive</button>
-    <button id="fit" class="btn" type="button" disabled>全体</button>
-    <button id="layers-btn" class="btn" type="button" disabled>レイヤ</button>
+    <button id="fit" class="btn" type="button" disabled title="図面の全体を表示">全体</button>
+    <button id="layers-btn" class="btn" type="button" disabled title="レイヤ名の一覧">レイヤ一覧</button>
     <button id="v3d-btn" class="btn" type="button" disabled>3D</button>
     <button id="theme" class="btn" type="button" aria-label="背景色を切り替え">白/黒</button>
   </header>
 
-  <main class="stage" id="stage">
-    <canvas id="canvas" aria-label="図面表示"></canvas>
-    <div id="empty" class="empty">
-      <p>JWW・DXFファイルをここ(画面のどこでも)にドラッグするか、<br>左上の「開く」から選んでください。</p>
-      <p class="note">図面はこの端末の中だけで処理され、外部には送信されません。</p>
-    </div>
-    <div id="busy" class="busy" hidden>読み込み中…</div>
-  </main>
-
-  <nav id="tools" class="tools" aria-label="測定・注釈" hidden>
-    <div class="tool-row" role="group" aria-label="ツール">
-      <button class="tool" type="button" data-tool="move" aria-pressed="true">移動</button>
-      <button class="tool" type="button" data-tool="select" aria-pressed="false">選択</button>
-      <button class="tool" type="button" data-group="shape" aria-pressed="false">図形</button>
-      <button class="tool" type="button" data-tool="ctext" aria-pressed="false">文字</button>
-      <button class="tool" type="button" data-group="measure" aria-pressed="false">測定</button>
-      <button class="tool" type="button" data-tool="wall" aria-pressed="false">壁3D</button>
-      <button class="tool" type="button" data-tool="mark" aria-pressed="false">基準点</button>
-      <button class="tool" type="button" data-tool="pen" aria-pressed="false">赤ペン</button>
-      <button class="tool" type="button" data-tool="text" aria-pressed="false">コメント</button>
-    </div>
-    <div id="opts" class="tool-row sub" hidden>
+  <!-- コントロールバー(Jw_cadと同じく、いまのコマンドの選択肢と案内) -->
+  <div id="ctrl" class="ctrl" hidden>
+    <div id="opts" class="tool-row" hidden>
       <span id="m-opts" class="tool-row" role="group" aria-label="測定の種類" hidden>
         <button class="btn small" type="button" data-tool="dim" aria-pressed="false">寸法</button>
         <button class="btn small" type="button" data-tool="area" aria-pressed="false">面積</button>
@@ -58,12 +39,7 @@
         <label>線の<select id="w-a" aria-label="なぞる線の位置"><option value="center">中心</option><option value="left">左側</option><option value="right">右側</option></select></label>
         <span class="hint">単位mm。なぞる線が壁の中心か、左右の面か</span>
       </span>
-      <span id="s-opts" class="tool-row" role="group" aria-label="図形の種類" hidden>
-        <button class="btn small" type="button" data-tool="line" aria-pressed="false">線</button>
-        <button class="btn small" type="button" data-tool="rect" aria-pressed="false">矩形</button>
-        <button class="btn small" type="button" data-tool="circle" aria-pressed="false">円</button>
-        <button class="btn small" type="button" data-tool="arrow" aria-pressed="false">矢印</button>
-      </span>
+      <span id="s-opts" class="tool-row" role="group" aria-label="図形の種類" hidden></span>
       <span id="a-opts" class="tool-row" role="group" aria-label="属性" hidden>
         <button id="t-pick" class="btn small" type="button" aria-pressed="false">属性取得</button>
         <i id="attr-chip" class="chip" aria-hidden="true"></i>
@@ -71,8 +47,7 @@
         <button id="t-attr-reset" class="btn small" type="button">既定に戻す</button>
       </span>
     </div>
-    <div class="tool-row sub">
-      <label class="scale">縮尺 1/<input id="scale" type="number" inputmode="numeric" min="1" step="1" value="100" aria-label="縮尺の分母"></label>
+    <div class="tool-row">
       <span id="tool-hint" class="hint"></span>
       <button id="t-shape-num" class="btn small" type="button" hidden>数値</button>
       <button id="t-add" class="btn small" type="button" aria-pressed="false" hidden>追加選択</button>
@@ -85,23 +60,66 @@
       <button id="t-big" class="btn small" type="button" hidden>×1.25</button>
       <button id="t-small" class="btn small" type="button" hidden>×0.8</button>
       <button id="t-3d" class="btn small" type="button" hidden>3D化</button>
-      <button id="t-copy" class="btn small" type="button" hidden>複製</button>
+      <button id="t-copy" class="btn small" type="button" hidden>複写</button>
       <button id="t-edit" class="btn small" type="button" hidden>書き換え</button>
-      <button id="t-del" class="btn small" type="button" hidden>削除</button>
+      <button id="t-del" class="btn small" type="button" hidden>消去</button>
       <button id="t-done" class="btn small" type="button" hidden>完了</button>
       <button id="t-cancel" class="btn small" type="button" hidden>取消</button>
-      <button id="t-undo" class="btn small" type="button">戻す</button>
-      <button id="t-save" class="btn small" type="button">保存</button>
-      <button id="t-export" class="btn small" type="button">書出</button>
     </div>
-  </nav>
+  </div>
+
+  <div class="work">
+    <!-- 左のツールバー(Jw_cadのコマンド名) -->
+    <nav id="tools" class="tools" aria-label="コマンド" hidden>
+      <div class="tb-sec">作図</div>
+      <button class="tool" type="button" data-tool="line" aria-pressed="false" title="線(2点を指示)">／ 線</button>
+      <button class="tool" type="button" data-tool="rect" aria-pressed="false" title="矩形(対角の2点)">□ 矩形</button>
+      <button class="tool" type="button" data-tool="circle" aria-pressed="false" title="円(中心と円周上の点)">○ 円</button>
+      <button class="tool" type="button" data-tool="arrow" aria-pressed="false" title="矢印(根元と先端)">→ 矢印</button>
+      <button class="tool" type="button" data-tool="ctext" aria-pressed="false" title="文字を書き込む">A 文字</button>
+      <div class="tb-sec">編集</div>
+      <button class="tool" type="button" data-tool="select" aria-pressed="false" title="範囲選択(囲む・タップ)→ 移動・複写・消去・回転など">⬚ 範囲</button>
+      <button class="tool" type="button" data-tool="erase" aria-pressed="false" title="消去(図形を指示して消す)">✕ 消去</button>
+      <button id="t-undo" class="tool" type="button" title="戻る(Esc / Ctrl+Z)">↶ 戻る</button>
+      <div class="tb-sec">表示・測定</div>
+      <button class="tool" type="button" data-tool="move" aria-pressed="true" title="画面を動かす(指1本でスクロール)">✋ 画面</button>
+      <button class="tool" type="button" data-group="measure" aria-pressed="false" title="測定(寸法・面積・ルート)">⟷ 測定</button>
+      <div class="tb-sec">注釈・3D</div>
+      <button class="tool" type="button" data-tool="mark" aria-pressed="false" title="基準点">⊕ 基準点</button>
+      <button class="tool" type="button" data-tool="pen" aria-pressed="false" title="赤ペン">✎ 赤ペン</button>
+      <button class="tool" type="button" data-tool="text" aria-pressed="false" title="コメント(図面とは別の書き込み)">💬 コメント</button>
+      <button class="tool" type="button" data-tool="wall" aria-pressed="false" title="壁をなぞって3Dにする">▦ 壁3D</button>
+    </nav>
+
+    <main class="stage" id="stage">
+      <canvas id="canvas" aria-label="図面表示"></canvas>
+      <div id="empty" class="empty">
+        <p>JWW・DXFファイルをここ(画面のどこでも)にドラッグするか、<br>左上の「開く」から選んでください。</p>
+        <p class="note">図面はこの端末の中だけで処理され、外部には送信されません。</p>
+      </div>
+      <div id="busy" class="busy" hidden>読み込み中…</div>
+    </main>
+
+    <!-- 右のレイヤバー(Jw_cadと同じ 0〜F) -->
+    <aside id="lbar" class="lbar" aria-label="レイヤ" hidden></aside>
+  </div>
 
   <div id="update" class="update" role="status" hidden>
     <span>新しい版があります。</span>
     <button id="update-btn" class="btn small" type="button">更新する</button>
   </div>
 
-  <footer id="status" class="status" role="status"></footer>
+  <!-- ステータスバー(Jw_cadと同じく、下に、案内・書込レイヤ・縮尺) -->
+  <footer class="statusbar">
+    <span id="status" class="msg" role="status"></span>
+    <span id="sb-tools" class="sb-tools" hidden>
+      <button id="lbar-toggle" class="btn small sb-only-narrow" type="button" aria-pressed="false" title="レイヤのボタンを出す/隠す">レイヤ</button>
+      <button id="wl-chip" class="btn small" type="button" title="書込レイヤ(押すと、レイヤ名の一覧)">[0-0]</button>
+      <label class="scale">S=1/<input id="scale" type="number" inputmode="numeric" min="1" step="1" value="100" aria-label="縮尺の分母"></label>
+      <button id="t-save" class="btn small" type="button">保存</button>
+      <button id="t-export" class="btn small" type="button">書出</button>
+    </span>
+  </footer>
 
   <aside id="panel" class="panel" hidden>
     <div class="panel-head">

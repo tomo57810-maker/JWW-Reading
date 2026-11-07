@@ -18,23 +18,28 @@ import { readDxfText } from "../vendor/ezjww.mjs";
 const $ = (id) => document.getElementById(id);
 const el0 = (sel) => document.querySelector(sel);
 
+// コントロールバーの案内(Jw_cadのコマンド名に合わせる)
 const HINTS = {
-  move: "指で動かす・2本指で拡大",
-  mark: "基準にする点をタップ→距離(実寸mm)を入力",
-  select: "タップで1つ選ぶ/なぞって範囲選択。選んだら、ドラッグで移動、角で拡大、○で回転。コメントなども選べます",
-  dim: "測定(寸法): 2点をタップ(端点に吸着)",
-  area: "測定(面積): 角を順にタップ→「完了」",
-  route: "測定(ルート): 経路を順にタップ→「完了」",
-  line: "図形(線): 始点と終点をタップ(端点・中点に吸着)。既存の線の線種は「属性取得」",
-  arrow: "図形(矢印): 根元と、先端(矢印の頭の側)をタップ",
-  rect: "図形(矩形): 対角の2点をタップ(「数値」で大きさ指定)",
-  circle: "図形(円): 中心と、円周上の点をタップ(「数値」で半径指定)",
-  wall: "壁の線を順にタップ(端点に吸着)→「完了」。最初の点にもう一度触れると、輪を閉じます。3Dの壁になります",
-  ctext: "文字を置きたい所をタップ。文字の大きさ・種類は「属性取得」で既存の文字から取れます",
-  pen: "指でなぞって書く",
-  text: "コメント(図面とは別の書き込み)を置きたい所をタップ",
-  erase: "消したい注釈・基準点をタップ(「戻す」で元に戻せます)",
+  move: "画面: 指1本・ドラッグで動かす / 2本指・ホイールで拡大縮小",
+  mark: "基準点: 基準にする点を指示 → 距離(実寸mm)を入力",
+  select: "範囲: 囲む(ドラッグ)・タップで図形を選ぶ → ドラッグで移動、角で拡大、○で回転、「複写」「消去」",
+  dim: "測定(寸法): 2点を指示",
+  area: "測定(面積): 角を順に指示 →「完了」",
+  route: "測定(ルート): 経路を順に指示 →「完了」",
+  line: "線: 始点 → 終点を指示。線種などは「属性取得」",
+  arrow: "矢印: 根元 → 先端を指示",
+  rect: "矩形: 対角の2点を指示(「数値」で大きさ)",
+  circle: "円: 中心 → 円周上の点を指示(「数値」で半径)",
+  wall: "壁3D: 壁の線を順に指示 →「完了」。最初の点にもう一度触れると、輪を閉じます",
+  ctext: "文字: 書く位置を指示。大きさ・種類は「属性取得」",
+  pen: "赤ペン: なぞって書く",
+  text: "コメント(図面とは別の書き込み): 置く位置を指示",
+  erase: "消去: 消す図形を指示(図形がなければ、注釈を消す)",
 };
+// 点を指示するモードで、案内のうしろに付ける、点の取り方(Jw_cadの左クリック=自由点・右クリック=読取点)
+const POINT_MODES = new Set(["mark", "dim", "area", "route", "line", "arrow", "rect", "circle", "wall", "ctext"]);
+const finePointer = typeof matchMedia === "function" && matchMedia("(pointer: fine)").matches;
+const POINT_HOW = finePointer ? " 〔(L)自由点 (R)読取点〕" : " 〔タップ=読取点(近くの端点) 長押し=自由点〕";
 
 const prefs = {
   get(key, fallback) {
@@ -60,7 +65,7 @@ export function coreOf(snap) {
 
 export function setupTools({ viewer, getModel, getFileName, storage, ensureLayerVisible = () => {} }) {
   const el = {
-    bar: $("tools"), scale: $("scale"), hint: $("tool-hint"),
+    bar: $("tools"), ctrl: $("ctrl"), scale: $("scale"), hint: $("tool-hint"),
     base: $("t-base"), stretch: $("t-stretch"), num: $("t-num"), shapeNum: $("t-shape-num"), save: $("t-save"),
     off: $("off"), offTitle: $("off-title"), offHint: $("off-hint"), offDx: $("off-dx"), offDy: $("off-dy"), offDxLabel: $("off-dx-label"), offDyRow: $("off-dy-row"),
     add: $("t-add"), rl: $("t-rl"), rr: $("t-rr"), big: $("t-big"), small: $("t-small"),
@@ -280,7 +285,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
   }
 
   function syncUi() {
-    for (const b of el.bar.querySelectorAll("[data-tool]")) b.setAttribute("aria-pressed", String(b.dataset.tool === tools.mode));
+    for (const b of document.querySelectorAll("[data-tool]")) b.setAttribute("aria-pressed", String(b.dataset.tool === tools.mode));
     const measuring = MEASURE_MODES.includes(tools.mode);
     const shaping = SHAPE_MODES.includes(tools.mode);
     const attrMode = ATTR_MODES.includes(tools.mode);
@@ -303,7 +308,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     const drafting = tools.drafting;
     el.done.hidden = !drafting;
     el.cancel.hidden = !drafting;
-    el.hint.textContent = flashText || HINTS[tools.mode] + (info && drafting ? `(${info.count}点)` : "");
+    el.hint.textContent = flashText || HINTS[tools.mode] + (info && drafting ? `(${info.count}点)` : "") + (POINT_MODES.has(tools.mode) ? POINT_HOW : "");
     const need = info?.kind === "area" ? 3 : 2;
     el.done.disabled = !info || info.count < need;
     const shapeDraft = tools.shapeDrafting;
@@ -344,7 +349,20 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
     }
   }
 
-  for (const b of el.bar.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
+  for (const b of document.querySelectorAll("[data-tool]")) b.addEventListener("click", () => tools.setMode(b.dataset.tool));
+  // キー操作: Esc・Ctrl+Z=戻る(Jw_cadと同じ)、Delete=選んだ図形を消去
+  document.addEventListener("keydown", (ev) => {
+    if (!edits || document.querySelector("dialog[open]")) return;
+    if (ev.target instanceof Element && ev.target.closest("input, textarea, select, [contenteditable]")) return;
+    if (ev.key === "Escape" || ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "z")) {
+      ev.preventDefault();
+      undoLast();
+    } else if (ev.key === "Delete" && tools.mode === "select" && (objectTool.hasSelection || tools.selected)) {
+      ev.preventDefault();
+      if (objectTool.hasSelection) objectTool.delete();
+      else tools.deleteSelected();
+    }
+  });
   for (const g of el.groups) {
     g.addEventListener("click", () => {
       const name = g.dataset.group;
@@ -835,6 +853,7 @@ export function setupTools({ viewer, getModel, getFileName, storage, ensureLayer
         if (!r.ok) el.hint.textContent = `保存済みの図形の編集は、${r.reason}ため、読み込めませんでした`;
         viewer.setEntities(edits.entities);
         el.bar.hidden = false;
+        el.ctrl.hidden = false;
         if (draft && coreOf(draft) !== savedCore) {
           const choice = await askResume(Boolean(saved));
           if (choice === "resume") applySnapshot(draft);

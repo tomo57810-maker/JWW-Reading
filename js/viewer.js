@@ -9,6 +9,8 @@ const MAX_ZOOM_OVER_FIT = 400;
 
 const TOUCH_PLACE_DELAY_MS = 120; // 点を置くモードで、指を離してから点を置くまでの待ち(2本目の指が来るかを見る)
 const MULTI_TOUCH_GUARD_MS = 300; // 2本指の操作の直後、この間に触れた1本目の指は、ツールに渡さない
+const LONG_PRESS_MS = 450; // 指の長押し(自由点)とみなす時間
+const LONG_PRESS_MOVE_PX = 10; // これ以上指が動いたら、長押しではない
 
 export class Viewer {
   constructor(canvas, onChange = () => {}) {
@@ -30,6 +32,12 @@ export class Viewer {
     this.tool = null; // 注釈・測定のツール(down/move/up/cancel/hover を持つ)。nullなら、指で動かすだけ
     this.toolPointerId = null;
     this.pendingUp = null; // 指を離したあと、点を置くのを少し待っているもの
+    this.toolFlags = {}; // いまの点の取り方(free=自由点 / read=読取点)
+    this.toolDownAt = null;
+    this.longPressTimer = 0;
+    this.panPointerId = null; // 中ボタンで画面を動かしている指(マウス)
+    this.panAt = null;
+    this.onLongPress = () => {}; // 長押しで自由点に切り替わったとき
     this.multiAt = -Infinity; // 2本以上の指が触れていた、いちばん新しい時刻
     this.overlay = null; // 図面の上に、注釈などを描く関数 ({ ctx, view, dpr, width, height }) => void
     this.#bindEvents();
@@ -353,7 +361,13 @@ export class Viewer {
       const r = c.getBoundingClientRect();
       return { x: ev.clientX - r.left, y: ev.clientY - r.top };
     };
-    const toolPoint = (p) => ({ sx: p.x, sy: p.y, world: this.toWorld(p.x, p.y) });
+    // flags: { free: true } = 自由点(左クリック・長押し)、{ read: true } = 読取点(右クリック)。Jw_cadと同じ区別
+    const toolPoint = (p, flags = this.toolFlags) => ({ sx: p.x, sy: p.y, world: this.toWorld(p.x, p.y), ...flags });
+    c.addEventListener("contextmenu", (ev) => ev.preventDefault()); // 右クリックは、読取点に使う
+    const clearLongPress = () => {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = 0;
+    };
     // 点を置くモード(測定・作図)で、2本指の操作の前後に、うっかり点が打たれるのを防ぐ。
     //  ・指を離しても、すぐには点を置かない(少し待ち、その間に2本目の指が触れたら、置かない)
     //  ・2本指の操作の直後に触れた1本目の指は、ツールに渡さない(指を持ち替えた、とみなす)
@@ -368,6 +382,13 @@ export class Viewer {
       c.setPointerCapture(ev.pointerId);
       const now = performance.now();
       const p = local(ev);
+      if (ev.pointerType === "mouse" && ev.button === 1) {
+        // 中ボタンのドラッグは、どのモードでも画面を動かす
+        ev.preventDefault();
+        this.panPointerId = ev.pointerId;
+        this.panAt = p;
+        return;
+      }
       this.pointers.set(ev.pointerId, p);
       if (this.pointers.size >= 2) this.multiAt = now;
       if (this.pointers.size >= 2 && (cancelPendingUp() || this.toolPointerId !== null)) {
@@ -377,18 +398,41 @@ export class Viewer {
       } else if (this.tool && this.pointers.size === 1) {
         if (ev.pointerType === "touch" && placing() && now - this.multiAt < MULTI_TOUCH_GUARD_MS) return; // 2本指の直後の、持ち替え
         this.toolPointerId = ev.pointerId;
+        this.toolFlags = ev.pointerType === "mouse" ? (ev.button === 2 ? { read: true } : { free: true }) : {};
+        this.toolDownAt = p;
         this.tool.down(toolPoint(p));
         this.#schedule();
+        if (ev.pointerType !== "mouse" && placing()) {
+          // 指の長押しは、自由点(吸着しない)。Jw_cadの左クリックにあたる
+          clearLongPress();
+          const id = ev.pointerId;
+          this.longPressTimer = setTimeout(() => {
+            this.longPressTimer = 0;
+            if (this.toolPointerId !== id) return;
+            this.toolFlags = { free: true };
+            this.tool.move?.(toolPoint(this.pointers.get(id) ?? p));
+            navigator.vibrate?.(15);
+            this.onLongPress();
+            this.#schedule();
+          }, LONG_PRESS_MS);
+        }
       }
     });
     c.addEventListener("pointermove", (ev) => {
-      const prev = this.pointers.get(ev.pointerId);
       const cur = local(ev);
+      if (ev.pointerId === this.panPointerId) {
+        this.view = { ...this.view, tx: this.view.tx + cur.x - this.panAt.x, ty: this.view.ty + cur.y - this.panAt.y };
+        this.panAt = cur;
+        this.#schedule();
+        return;
+      }
+      const prev = this.pointers.get(ev.pointerId);
       if (!prev) {
         if (this.tool?.hover && ev.pointerType === "mouse") { this.tool.hover(toolPoint(cur)); this.#schedule(); }
         return;
       }
       if (ev.pointerId === this.toolPointerId && this.pointers.size === 1) {
+        if (this.longPressTimer && Math.hypot(cur.x - this.toolDownAt.x, cur.y - this.toolDownAt.y) > LONG_PRESS_MOVE_PX) clearLongPress(); // 動かしたら、長押しではない
         this.pointers.set(ev.pointerId, cur);
         this.tool.move(toolPoint(cur));
         this.#schedule();
@@ -411,6 +455,11 @@ export class Viewer {
     });
     const end = (ev, cancelled) => {
       const p = local(ev);
+      if (ev.pointerId === this.panPointerId) {
+        this.panPointerId = null;
+        return;
+      }
+      if (ev.pointerId === this.toolPointerId) clearLongPress();
       if (this.pointers.size >= 2) this.multiAt = performance.now(); // 2本指の操作が終わった時刻
       if (ev.pointerId === this.toolPointerId) {
         this.toolPointerId = null;
@@ -418,9 +467,10 @@ export class Viewer {
         else if (ev.pointerType === "touch" && placing()) {
           // すぐには置かず、少し待つ。その間に2本目の指が触れたら、2本指の操作とみなして、置かない
           const tool = this.tool;
+          const flags = this.toolFlags;
           const timer = setTimeout(() => {
             this.pendingUp = null;
-            tool.up(toolPoint(p));
+            tool.up(toolPoint(p, flags));
             this.#schedule();
           }, TOUCH_PLACE_DELAY_MS);
           this.pendingUp = { timer };

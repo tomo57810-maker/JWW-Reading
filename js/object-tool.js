@@ -457,6 +457,17 @@ export class ObjectTool {
     this.clearSelection();
   }
 
+  /** Jw_cadの「消去」: 指した位置にいちばん近い図形を1つ消す。消せたら true。 */
+  eraseAt(point, tolPx = PICK_PX) {
+    if (!this.edits) return false;
+    const i = pickEntity(this.edits.entities, point.world.x, point.world.y, tolPx / this.viewer.view.s, this.#visible);
+    if (i < 0) return false;
+    this.edits.add({ type: "delete", ids: [i] });
+    this.viewer.setEntities(this.edits.entities);
+    this.onState();
+    return true;
+  }
+
   /** 直前の編集を取り消す。取り消せたら true。 */
   undo() {
     if (!this.edits.undo()) return false;

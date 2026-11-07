@@ -6,6 +6,7 @@ import { lineTypeLabel } from "./drawing.js";
 import { DEFAULT_TEXT_ATTR, makeTextEntities } from "./text.js";
 
 const SNAP_PX = 14; // 画面上で、この距離以内の端点に吸着する
+const READ_SNAP_FACTOR = 2; // 右クリック(読取点)は、指より広い範囲から探す(Jw_cadの読取と同じく、近くの点に必ず合わせる)
 const TAP_MOVE_PX = 10; // 指がこれ以上動いたら、「タップ」ではなく「ドラッグ」とみなす(赤ペン以外では、離した位置を採用)
 const PEN_MIN_STEP_PX = 2;
 
@@ -104,7 +105,7 @@ export class ToolController {
 
   /** 指で点を置くモードか(測定・作図)。2本指の操作の前後の、うっかりタップを防ぐ処理の対象。 */
   get placesPoints() {
-    return ["dim", "area", "route", "wall", "mark", "line", "rect", "circle", "arrow", "ctext"].includes(this.mode);
+    return ["dim", "area", "route", "wall", "mark", "line", "rect", "circle", "arrow", "ctext", "erase"].includes(this.mode);
   }
 
   /** 2本目の指が触れたとき: 書きかけの赤ペンの線や、注釈の移動だけをやめる。点を置いた作図中の線は残す。 */
@@ -301,12 +302,25 @@ export class ToolController {
     return { kind: d.item.kind, count: d.item.points.length, length: polylineLength(d.item.points) };
   }
 
-  /** 画面上の吸着の範囲を、用紙mmに直して、近い端点を探す。 */
+  /**
+   * 点を決める。Jw_cadと同じく、point.free(左クリック・長押し)は「自由点」=指した位置そのまま、
+   * point.read(右クリック)は「読取点」=近い端点・中点など。読取点が近くになければ null。
+   * どちらでもない(指のタップ)は、近くに端点があればそこ、なければ指した位置。
+   */
   #snapPoint(point) {
+    if (point.free) return point.world;
     const index = this.getSnap();
-    const tol = SNAP_PX / this.viewer.view.s;
+    const tol = (point.read ? SNAP_PX * READ_SNAP_FACTOR : SNAP_PX) / this.viewer.view.s;
     const hit = index?.nearest(point.world, tol) ?? null;
+    if (point.read) return hit;
     return hit ?? point.world;
+  }
+
+  /** 右クリックで、読取点がなかったとき。 */
+  #noReadPoint() {
+    this.snap = null;
+    this.onNotice("読取点がありません(右クリックは、端点・中点などに合わせます。自由な位置は、左クリックで指示します)");
+    this.onState();
   }
 
   hover(point) {
@@ -316,8 +330,9 @@ export class ToolController {
   }
 
   #nearEndpoint(point) {
+    if (point.free) return null; // 自由点は吸着しないので、印も出さない
     const index = this.getSnap();
-    return index?.nearest(point.world, SNAP_PX / this.viewer.view.s) ?? null;
+    return index?.nearest(point.world, (point.read ? SNAP_PX * READ_SNAP_FACTOR : SNAP_PX) / this.viewer.view.s) ?? null;
   }
 
   /** 画面の点にある注釈を探す。コメントは描いた四角、それ以外は線からの距離で判定する。 */
@@ -505,6 +520,10 @@ export class ToolController {
       case "route":
       case "wall": {
         const p = this.#snapPoint(point);
+        if (!p) {
+          this.#noReadPoint();
+          break;
+        }
         if (!this.draft) {
           const item = { kind: this.mode, points: [], scale: this.getScale() };
           if (this.mode === "wall") item.thick = this.getWallParams().thick; // 作図中の太さの表示に使う
@@ -534,6 +553,10 @@ export class ToolController {
       case "circle":
       case "arrow": {
         const p = this.#snapPoint(point);
+        if (!p) {
+          this.#noReadPoint();
+          break;
+        }
         if (!this.draft) this.draft = { item: { kind: this.mode, points: [], scale: this.getScale() }, cursor: null };
         const pts = this.draft.item.points;
         const last = pts.at(-1);
@@ -547,6 +570,10 @@ export class ToolController {
       case "ctext": {
         if (moved > TAP_MOVE_PX) break;
         const at = this.#snapPoint(point);
+        if (!at) {
+          this.#noReadPoint();
+          break;
+        }
         const cur = this.textStyle;
         const r = this.askDrawText ? await this.askDrawText({ initial: "", height: cur.height }) : { text: await this.askText(at, ""), height: cur.height };
         this.snap = null;
@@ -560,6 +587,10 @@ export class ToolController {
       case "mark": {
         if (moved > TAP_MOVE_PX * 2) break;
         const base = this.#snapPoint(point);
+        if (!base) {
+          this.#noReadPoint();
+          break;
+        }
         const scale = this.getScale();
         const r = await this.askOffset("基準点を打つ", "基点(いまタップした点)から、横(→が+)・縦(↑が+)に、実寸で何mm離れた所に打ちますか。0・0なら、基点そのものに打ちます。");
         this.snap = null;
@@ -584,6 +615,11 @@ export class ToolController {
       }
       case "erase": {
         if (moved > TAP_MOVE_PX) break;
+        // Jw_cadの「消去」: まず図面の図形、なければ注釈(コメント・寸法など)を1つ消す
+        if (this.objectTool?.eraseAt(point, SNAP_PX * 1.2)) {
+          this.onState();
+          break;
+        }
         const hit = hitTest(this.store.items, point.world, (SNAP_PX * 1.6) / this.viewer.view.s); // 指で押す位置のずれを見込んで、広めに判定する
         if (hit) this.store.remove(hit.id);
         this.onState();
